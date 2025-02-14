@@ -1,0 +1,120 @@
+{
+  "errors": {
+    "generic": "⚠️ GANGGUAN SISTEM SEMENTARA\nMohon bersabar, para robot kecil kami sedang bekerja keras!\n⏳ Coba lagi dalam 3 menit atau hubungi teknisi:\nwa.me/${OWNER_NUMBER_ONE}",
+    "server_error": "🔥 ERROR 500: GANGGUAN SERVER\nTim teknisi telah diberi tahu\nSilakan coba lagi dalam 5-10 menit",
+    "maintenance": "🔧 SISTEM SEDANG DIPERBAIKI\nPerbaikan diperkirakan selesai dalam:\n🕒 1 Jam 30 Menit\nFollow Twitter @AIExplorer untuk update",
+    "rate_limit": "⏰ BATAS PENGGUNAAN\nAnda telah mencapai limit harian\nPremium member mendapatkan akses tak terbatas!",
+    "call": {
+      "blocked": "❌ *Anda telah diblokir dan dibanned karena melakukan panggilan berulang kali ke bot*",
+      "warning": "⚠️ *Peringatan!*\n\nJangan melakukan panggilan ke bot!\nPanggilan akan otomatis ditolak.\n\nPeringatan: ${callCount}/${MAX_CALL_ATTEMPTS}\n\nJika Anda melakukan panggilan sebanyak ${MAX_CALL_ATTEMPTS} kali, Anda akan diblokir dan dibanned secara otomatis.",
+      "rejected": "📞 Panggilan dari ${callerJid} telah ditolak otomatis",
+      "error": "⚠️ *Sistem sedang mengalami gangguan, tetapi panggilan tetap tidak diizinkan*"
+    },
+    "rpg": {
+      "no_character": "❌ Kamu belum memiliki karakter!\nGunakan !createchar untuk membuat karakter.",
+      "in_battle": "❌ Kamu sedang dalam pertarungan!",
+      "invalid_class": "❌ Kelas tidak valid! Pilih: warrior/mage/assassin/archer",
+      "skill_fail": "❌ Skill tidak tersedia!",
+      "inventory_full": "❌ Inventory penuh!"
+    },
+    "invalid_usage": "❌ Format salah! Gunakan: {usage}",
+    "admin_only": "⚠️ Perintah ini hanya untuk admin grup!",
+    "bot_admin_required": "Bot harus menjadi admin untuk menggunakan fitur ini!",
+    "group_only": "Perintah ini hanya dapat digunakan di dalam grup!"
+  },
+
+  "commands": {
+    "help_menu": "🆘 MENU BANTUAN:\n• !menu - Tampilkan semua fitur\n• !info - Status akun & penggunaan\n• !reset - Mulai percakapan baru\n• !bahasa - Ganti bahasa",
+    "ai_commands": "🧠 COMMAND AI:\n• !ai [pertanyaan] - Konsultasi AI\n• !img [prompt] - Generate gambar\n• !tts [teks] - Konversi ke suara\n• !translate [teks] - Terjemahkan",
+    "utility_commands": "🔧 COMMAND UTAMA:\n• !summarize - Ringkas dokumen\n• !reminder - Atur pengingat\n• !calc - Kalkulator ilmiah\n• !news - Berita terkini",
+    "invalid_command": "❌ PERINTAH TIDAK DIKENALI\nGunakan !help untuk melihat panduan\natau ketik !menu untuk panduan lengkap",
+    "rpg": {
+      "createchar": "⚔️ Buat karakter RPG baru\nFormat: !createchar <nama> <class>\nKelas tersedia: Warrior, Mage, Assassin, Archer",
+      "profile": "📊 Lihat status karakter RPG-mu",
+      "battle": "⚔️ Mulai pertarungan dengan monster",
+      "inventory": "🎒 Tampilkan inventory karakter",
+      "skill": "✨ Gunakan skill dalam pertarungan"
+    },
+    "group": {
+      "menu": "📝 *Hallo {username} berikut adalah perintah yang tersedia untuk command grup*\n▢ {prefix}group open - Membuka grup\n▢ {prefix}group close - Menutup grup\n▢ {prefix}group link - Mendapatkan link invite\n▢ {prefix}group revoke - Mereset link invite\n▢ {prefix}group name <text> - Mengubah nama grup\n▢ {prefix}group desc <text> - Mengubah deskripsi grup\n▢ {prefix}group promote @user - Menjadikan member sebagai admin\n▢ {prefix}group demote @user - Menurunkan admin menjadi member\n▢ {prefix}group leave - Mengeluarkan bot dari grup\n▢ {prefix}group info - Menampilkan informasi grup\n▢ {prefix}hidetag <text> - Mention semua member dengan pesan\n▢ {prefix}tagall <text> - Mention semua member dengan pesan\n▢ {prefix}tagadmin - Mention semua admin dengan pesan\n▢ {prefix}kick @user - Mengeluarkan anggota dari grup\n▢ {prefix}add <number> - Menambahkan anggota ke grup\n▢ {prefix}mute on - Mengaktifkan mode senyap\n▢ {prefix}mute off - Menonaktifkan mode senyap\n▢ {prefix}chatmode admin - Hanya admin yang bisa chat\n▢ {prefix}chatmode all - Semua member bisa chat\n▢ {prefix}setppgc - Mengubah foto profil grup",
+      "success_open": "✅ Grup telah dibuka!",
+      "success_close": "✅ Grup telah ditutup!",
+      "link": "🔗 Link grup: {link}",
+      "reset_link": "✅ Link grup telah direset!",
+      "name_updated": "✅ Nama grup telah diubah menjadi: {name}",
+      "desc_updated": "✅ Deskripsi grup telah diperbarui!",
+      "promote_success": "✅ Berhasil menjadikan member sebagai admin!",
+      "demote_success": "✅ Berhasil menurunkan admin menjadi member!",
+      "leave": "👋 Selamat tinggal! Bot akan keluar dari grup.",
+      "info": "*INFO GRUP*\n\n📛 *Nama:* {name}\n👥 *Member:* {members}\n👑 *Admin:* {admins}\n🆔 *ID:* {id}\n📅 *Dibuat:* {created}\n💬 *Deskripsi:*\n{desc}"
+    },
+    "stalk": {
+      "invalid_username": "❌ Masukkan username Instagram yang valid!\nContoh: !igstalk username",
+      "profile_not_found": "❌ Profil tidak ditemukan atau akun private",
+      "result": "📸 *INSTAGRAM STALKER*\n\n*Nama Lengkap:* {fullName}\n*Username:* @{username}\n\n📊 *STATISTIK*\n• *Followers:* {followers}\n• *Following:* {following}\n• *Postingan:* {posts}\n\n📝 *BIO:*\n{bio}\n\n🔗 *Profil:* instagram.com/{username}"
+    },
+    "hack": {
+      "invalid_ip": "❌ Format IP tidak valid\n\nContoh: {prefix}ipgeo 8.8.8.8",
+      "invalid_phone": "❌ Format nomor HP tidak valid\n\nContoh: .hpgeo 628123456789"
+    },
+    "downloader": {
+      "invalid_url": "❗ Silakan masukkan URL YouTube\nContoh: {example}",
+      "processing": "⏳ Sedang memproses video...",
+      "downloading": "📥 Mengunduh video...",
+      "sending": "✅ Video berhasil didownload, mengirim...",
+      "duration_limit": "❌ Maaf, video terlalu panjang. Maksimal {max} menit!"
+    },
+    "games": {
+      "active_game": "⚠️ Masih ada game {game} yang sedang berlangsung.\nSilahkan selesaikan atau tunggu timeout.",
+      "trivia_question": "📝 TRIVIA: {category}\n\n{question}\n\n{options}"
+    }
+  },
+
+  "guides": {
+    "welcome": "🤖✨ Selamat datang di Dunia AI Explorer! Temukan kekuatan kecerdasan buatan dalam genggamanmu. Saya siap membantumu menjelajahi teknologi masa depan!",
+    "tutorial": "📚 PANDUAN PENGGUNAAN:\n1. Awali dengan !ai\n2. Tulis pertanyaan spesifik\n3. Gunakan bahasa jelas\n4. Tambah konteks jika perlu\nContoh: '!ai Buatkan proposal bisnis cafe kekinian di Bali'",
+    "ai_prompt": "💡 TANYA APA SAJA!\nFormat: !ai [pertanyaanmu]\nContoh:\n- !ai Strategi marketing digital 2024\n- !ai Puisi tentang teknologi\n- !ai Analisis saham TERBARU",
+    "rpg": {
+      "character_created": "✅ Karakter berhasil dibuat!\n\n*Detail Karakter:*\n📝 Nama: ${name}\n⚔️ Kelas: ${className}\n❤️ HP: ${hp}\n💫 MP: ${mp}\n⚡ Stamina: ${stamina}",
+      "battle_start": "⚔️ *BATTLE START!*\n🆚 Melawan: ${enemyName} (Lv.${level})\n❤️ HP: ${hp}/${maxHp}\n⚔️ Attack: ${attack}\n🛡️ Defense: ${defense}",
+      "victory": "🎉 *VICTORY!*\nMendapatkan:\n✨ ${exp} EXP\n💰 ${gold} Gold",
+      "defeat": "💀 *DEFEATED!*\nKamu kalah dalam pertarungan..."
+    }
+  },
+
+  "info": {
+    "privacy": "🔒 KEAMANAN DATA:\n1. Enkripsi end-to-end\n2. Riwayat chat otomatis terhapus\n3. Perlindungan GDPR compliant",
+    "news": "📢 PEMBARUAN v2.4:\n- Tambah 7 bahasa baru\n- Optimasi NLP 50%\n- Fitur analisis data real-time\n- Deteksi konten sensitif",
+    "data": "🗑️ DATA TERHAPUS!\nPercakapan Anda aman dan terenkripsi\nGunakan !new untuk mulai fresh",
+    "connection": {
+      "connected": "✅ Terhubung ke WhatsApp!",
+      "reconnecting": "♻️ Mencoba menghubungkan kembali...",
+      "disconnected": "❌ Koneksi terputus: ${reason}"
+    },
+    "rpg": {
+      "profile": "📊 *STATUS KARAKTER*\n📝 Nama: ${name}\n⚔️ Kelas: ${className}\n📈 Level: ${level}\n💰 Gold: ${gold}\n❤️ HP: ${hp}/${maxHp}\n💫 MP: ${mp}/${maxMp}\n⚡ Stamina: ${stamina}/${maxStamina}",
+      "inventory": "🎒 *INVENTORY*\nKapasitas: ${weight}/${maxWeight}\n\n*Items:*\n${items}\n*Equipment:*\n🗡️ Weapon: ${weapon}\n🛡️ Armor: ${armor}\n💍 Accessory: ${accessory}"
+    }
+  },
+
+  "support": {
+    "contact": "👨💻 DUKUNGAN TEKNIS:\n• Rio Belly: wa.me/${OWNER_NUMBER_ONE}\n• Bagas Saputra: wa.me/${OWNER_NUMBER_TWO}",
+    "report": "📩 LAPORKAN MASALAH:\nGunakan format: !lapor [deskripsi]\nContoh: !lapor Fitur translate error\nRespon maksimal 1x24 jam"
+  },
+
+  "block": {
+    "banned": "🔒 Anda telah dibanned!\nAlasan: ${reason}\nTanggal: ${date}\nHubungi owner untuk unbanned",
+    "blocked": "🚫 Anda telah diblokir!\nAlasan: ${reason}\nOleh: ${blockedBy}",
+    "error": "❌ Gagal memblokir pengguna"
+  },
+
+  "unblock": {
+    "success": "🔓 Berhasil membuka blokir ${userId}",
+    "error": "❌ Gagal membuka blokir pengguna",
+    "not_found": "ℹ️ Pengguna tidak ditemukan dalam daftar blokir"
+  },
+
+  "success": {
+    "group_updated": "✅ Berhasil mengubah pengaturan {setting} menjadi {value}"
+  }
+}
