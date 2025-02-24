@@ -3,5 +3,50 @@
     "word": "indonesia",
     "category": "negara",
     "hint": "Tempat kita tinggal"
+  },
+  {
+    "word": "apel",
+    "category": "buah",
+    "hint": "Buah merah atau hijau yang renyah"
+  },
+  {
+    "word": "harimau",
+    "category": "hewan",
+    "hint": "Kucing besar bergaris oranye dan hitam"
+  },
+  {
+    "word": "rendang",
+    "category": "makanan",
+    "hint": "Masakan daging berbumbu dari Sumatra Barat"
+  },
+  {
+    "word": "sepakbola",
+    "category": "olahraga",
+    "hint": "Permainan dengan bola dan gawang"
+  },
+  {
+    "word": "smartphone",
+    "category": "teknologi",
+    "hint": "Perangkat komunikasi genggam modern"
+  },
+  {
+    "word": "kartini",
+    "category": "pahlawan",
+    "hint": "Pahlawan emansipasi wanita Indonesia"
+  },
+  {
+    "word": "kereta",
+    "category": "transportasi",
+    "hint": "Kendaraan rel berjalan di atas rel"
+  },
+  {
+    "word": "mangga",
+    "category": "buah",
+    "hint": "Buah tropis manis dengan biji pipih"
+  },
+  {
+    "word": "komodo",
+    "category": "hewan",
+    "hint": "Reptil purba asal Nusa Tenggara"
   }
 ]

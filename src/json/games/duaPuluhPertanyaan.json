@@ -6,13 +6,13 @@
       "hints": [
         "Hewan peliharaan",
         "Suka mengeong",
-        "Bersih dan suka menjilat tubuhnya", 
+        "Bersih dan suka menjilat tubuhnya",
         "Aktif di malam hari"
       ]
     },
     {
       "name": "Anjing",
-      "category": "Hewan", 
+      "category": "Hewan",
       "hints": [
         "Hewan peliharaan",
         "Suka menggonggong",
@@ -35,7 +35,7 @@
       "category": "Hewan",
       "hints": [
         "Raja hutan",
-        "Karnivora", 
+        "Karnivora",
         "Memiliki surai (jantan)",
         "Hidup dalam kelompok yang disebut kebanggaan"
       ]
@@ -388,6 +388,156 @@
         "Ada di ruang keluarga",
         "Untuk hiburan",
         "Memiliki remote control"
+      ]
+    },
+    {
+      "name": "Kipas Angin",
+      "category": "Elektronik",
+      "hints": [
+        "Menggerakkan udara",
+        "Menggunakan baling-baling",
+        "Ada yang berdiri dan meja",
+        "Membantu saat cuaca panas"
+      ]
+    },
+    {
+      "name": "Matahari",
+      "category": "Benda Langit",
+      "hints": [
+        "Sumber energi bumi",
+        "Berbentuk bola gas panas",
+        "Pusat tata surya",
+        "Terbit di timur tenggelam di barat"
+      ]
+    },
+    {
+      "name": "Kamera",
+      "category": "Elektronik",
+      "hints": [
+        "Alat pengambil gambar",
+        "Memiliki lensa dan sensor",
+        "Bisa analog atau digital",
+        "Menggunakan memori penyimpanan"
+      ]
+    },
+    {
+      "name": "Guru",
+      "category": "Pekerjaan",
+      "hints": [
+        "Mengajar di sekolah",
+        "Memberikan ilmu pengetahuan",
+        "Membuat rencana pembelajaran",
+        "Memiliki siswa/murid"
+      ]
+    },
+    {
+      "name": "Pisau",
+      "category": "Perkakas",
+      "hints": [
+        "Alat pemotong",
+        "Memiliki mata tajam",
+        "Berbagai ukuran dan fungsi",
+        "Digunakan di dapur atau workshop"
+      ]
+    },
+    {
+      "name": "Hujan",
+      "category": "Fenomena Alam",
+      "hints": [
+        "Turun dari awan",
+        "Butiran air",
+        "Membawa kesuburan",
+        "Sering dengan petir dan angin"
+      ]
+    },
+    {
+      "name": "Bola Basket",
+      "category": "Olahraga",
+      "hints": [
+        "Olahraga beregu",
+        "Dimainkan di lapangan keras",
+        "Menggunakan ring dan papan pantul",
+        "Pemain terkenal: Michael Jordan"
+      ]
+    },
+    {
+      "name": "Kulkas",
+      "category": "Elektronik",
+      "hints": [
+        "Menyimpan makanan dingin",
+        "Memiliki freezer",
+        "Mencegah pembusukan",
+        "Menggunakan sistem pendingin"
+      ]
+    },
+    {
+      "name": "Kupu-kupu",
+      "category": "Serangga",
+      "hints": [
+        "Metamorfosis sempurna",
+        "Memiliki sayap indah",
+        "Menghisap nektar bunga",
+        "Dari ulat menjadi kepompong"
+      ]
+    },
+    {
+      "name": "Piano",
+      "category": "Alat Musik",
+      "hints": [
+        "Memiliki tuts hitam-putih",
+        "Dimainkan dengan jari",
+        "Alat musik klasik",
+        "Bisa akustik atau digital"
+      ]
+    },
+    {
+      "name": "Pahlawan",
+      "category": "Sejarah",
+      "hints": [
+        "Pejuang kemerdekaan",
+        "Memiliki jasa besar",
+        "Dikenang dalam sejarah",
+        "Banyak memiliki monumen"
+      ]
+    },
+    {
+      "name": "Sate",
+      "category": "Makanan",
+      "hints": [
+        "Daging tusuk",
+        "Dibakar dengan arang",
+        "Bumbu kacang",
+        "Makanan jalanan populer"
+      ]
+    },
+    {
+      "name": "Buku",
+      "category": "Pendidikan",
+      "hints": [
+        "Kumpulan kertas berjilid",
+        "Sumber pengetahuan",
+        "Memiliki ISBN",
+        "Bisa fiksi atau non-fiksi"
+      ]
+    },
+    {
+      "name": "Dokter",
+      "category": "Profesi",
+      "hints": [
+        "Menangani pasien",
+        "Bekerja di rumah sakit",
+        "Menggunakan stetoskop",
+        "Spesialisasi berbagai bidang"
+      ]
+    },
+    {
+      "name": "Pelangi",
+      "category": "Fenomena Alam",
+      "hints": [
+        "Tampak setelah hujan",
+        "Lengkung warna-warni",
+        "Pembiasan cahaya matahari",
+        "Terdiri dari 7 warna"
       ]
     }
   ]

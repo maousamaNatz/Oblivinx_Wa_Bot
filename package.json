@@ -84,6 +84,7 @@
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "^6.6.0",
     "@yemreak/yt-dlp": "^1.1.5",
     "acrcloud": "^1.4.0",

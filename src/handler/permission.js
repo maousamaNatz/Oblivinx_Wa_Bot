@@ -43,7 +43,22 @@ function setup(sockInstance) {
     botLogger.success('Permission handler setup completed');
 }
 
-module.exports = {
-    isAdmin,
-    setup
-};
+function registerCommand(config) {
+    botLogger.info(`Registering command: ${config.name}`);
+}
+
+async function checkStalkUsage(userId) {
+    // Fungsi stub: izinkan semua penggunaan
+    return true;
+}
+
+async function checkAIUsage(userId) {
+    // Fungsi stub: izinkan semua penggunaan
+    return true;
+}
+
+// Definisikan permissionHandler sebagai sebuah objek yang berisi semua fungsi
+const permissionHandler = { isAdmin, setup, registerCommand, checkStalkUsage, checkAIUsage };
+
+// Ubah module.exports untuk mendukung impor langsung dan terdestrukturisasi
+module.exports = Object.assign({}, permissionHandler, { permissionHandler });

@@ -40,6 +40,11 @@ const { unbanUser } = require("./src/handler/messageHandler");
 const { handleGroupMessage } = require("./src/handler/groupHandler");
 const crypto = require("crypto");
 
+// Tambahkan di awal file, tepat setelah baris pertama (misalnya 'use strict' jika ada)
+if (!process.env.PREFIX || process.env.PREFIX.trim() === "") {
+  process.env.PREFIX = "!";
+}
+
 // ====== LOGGER ======
 const log = (type, message) => {
   const now = new Date().toLocaleString();
@@ -79,27 +84,25 @@ function loadCommands(commandsPath) {
     const fullPath = path.join(commandsPath, file);
 
     if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
-      const commandModule = require(fullPath);
-      if (typeof commandModule === "function") {
-        commandModule(global.Oblixn);
-      }
+      require(fullPath);
     }
   });
-  if (typeof Oblixn.cmd === "function") {
-    log("SUCCESS", `Command berhasil di load`);
-  }
+
+  log("SUCCESS", "Command berhasil di load");
 }
 
 // ====== DEFINE OBLIXN CMD ======
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 global.Oblixn = {
   commands: new Map(),
   cmd: function (options) {
     const { name, alias = [], desc = "", category = "utility", exec } = options;
 
     if (!name || typeof exec !== "function") {
-      throw new Error(
-        'Command harus memiliki "name" dan "exec" sebagai function.'
-      );
+      throw new Error('Command harus memiliki "name" dan "exec" sebagai function.');
     }
 
     const wrappedExec = async (msg, params) => {
@@ -130,7 +133,7 @@ global.Oblixn = {
       }
     };
 
-    const patterns = [name, ...alias].map((cmd) => `^${cmd}(?:\\s+(.*))?$`);
+    const patterns = [name, ...alias].map((cmd) => `^${escapeRegex(cmd)}(?:\s+(.*))?$`);
 
     registerCommand(
       {

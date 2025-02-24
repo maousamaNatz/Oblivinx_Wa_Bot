@@ -33,15 +33,64 @@ const BASE_PATH = path.resolve(__dirname, "..");
 const SESSIONS_PATH = path.join(BASE_PATH, "sessions");
 const STORE_PATH = path.join(BASE_PATH, "store");
 
-// Perbaikan inisialisasi store
+// Inisialisasi store dengan error handling
 const store = makeInMemoryStore({ 
-  logger: baileysLogger 
+  logger: baileysLogger.child({ level: 'debug', stream: 'store' })
 });
 
-// Pindahkan binding event ke bagian setelah socket dibuat
-let bindStoreToSocket = (sock) => {
-  store.bind(sock.ev);
-}
+const initializeStore = async () => {
+  try {
+    const baileysFile = path.join(__dirname, '../baileys_store.json');
+    
+    // Coba baca dari file
+    if (fs.existsSync(baileysFile)) {
+      await store.readFromFile(baileysFile);
+      botLogger.info('Store loaded from file');
+    } else {
+      botLogger.info('Creating new store file');
+    }
+    
+    // Set interval untuk auto-save
+    setInterval(async () => {
+      try {
+        await store.writeToFile(baileysFile);
+        botLogger.debug('Store saved successfully');
+      } catch (error) {
+        botLogger.error('Gagal menyimpan store:', error);
+      }
+    }, 10000);
+    
+  } catch (error) {
+    botLogger.error('❌ Failed to initialize store:', error);
+    process.exit(1);
+  }
+};
+
+// Panggil fungsi inisialisasi
+initializeStore();
+
+// Perbarui fungsi bindStoreToSocket
+const bindStoreToSocket = (sock) => {
+  try {
+    if (!sock?.ev) {
+      throw new Error('Socket tidak valid untuk binding store');
+    }
+    
+    store.bind(sock.ev);
+    sock.ev.on('creds.update', () => {
+      store.writeToFile(baileysFile).catch(error => {
+        botLogger.error('Gagal menyimpan store:', error);
+      });
+    });
+    botLogger.info('Store berhasil di-bind ke socket');
+    
+  } catch (error) {
+    botLogger.error('Gagal binding store:', {
+      error: error.message,
+      socketStatus: sock ? 'Socket exists' : 'Socket null'
+    });
+  }
+};
 
 const cpus = os.cpus();
 const prosessor = cpus[0].model;
@@ -284,6 +333,24 @@ let config = {
     packname: "NatzBot",
     author: "ORBIT STUDIO",
     quality: 70
+  },
+  leveling: {
+    xpPerMessage: {
+      text: 10,
+      image: 15,
+      video: 20,
+      sticker: 5
+    },
+    xpCooldown: 60, // detik
+    dailyCap: 500,
+    weeklyCap: 3000,
+    levelFormula: (level) => Math.floor(100 * Math.pow(1.1, level)),
+    roleRewards: {
+      5: { badge: '🥉', boost: 1.1 },
+      10: { badge: '🥈', boost: 1.2 },
+      20: { badge: '🥇', boost: 1.3 },
+      30: { badge: '💎', boost: 1.5 }
+    }
   }
 };
 

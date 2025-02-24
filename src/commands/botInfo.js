@@ -6,46 +6,7 @@ const fs = require("fs");
 const path = require("path");
 const { permissionHandler } = require("../../src/handler/permission");
 
-async function loadCommands() {
-  const commands = new Map();
-  const commandsDir = path.join(__dirname);
-
-  try {
-    const files = fs.readdirSync(commandsDir);
-
-    for (const file of files) {
-      if (file.endsWith(".js")) {
-        const commandPath = path.join(commandsDir, file);
-
-        // Skip file ini sendiri
-        if (file === "botInfo.js") continue;
-
-        try {
-          delete require.cache[require.resolve(commandPath)];
-          const commandModule = require(commandPath);
-
-          // Ambil konfigurasi command dari Oblixn.cmd
-          if (commandModule && typeof commandModule === "object") {
-            const cmdConfig = commandModule.cmdConfig || {};
-            commands.set(cmdConfig.name, {
-              name: cmdConfig.name,
-              category: cmdConfig.category || "uncategorized",
-            });
-          }
-        } catch (err) {
-          console.error(`Error loading command ${file}:`, err);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Error reading commands directory:", error);
-  }
-  return commands;
-}
-
-const commands = loadCommands();
-console.log(commands);
-// Fungsi untuk menampilkan info bot
+// Command: !botinfo
 Oblixn.cmd({
   name: "botinfo",
   alias: ["info", "status"],
@@ -53,20 +14,14 @@ Oblixn.cmd({
   category: "info",
   async exec(msg) {
     try {
-      // Tambahkan pengecekan izin
-      const isAdmin = await permissionHandler.isAdmin(msg.sender);
-      if (!isAdmin) {
-        return msg.reply("❌ Akses ditolak! Hanya admin yang bisa menggunakan command ini");
-      }
-
-      const { botName, owner, processor } = config;
+      const { botName, owner } = config;
       const uptime = process.uptime();
       const uptimeStr = formatUptime(uptime);
 
       const infoText =
         `🤖 *${botName} BOT INFO* 🤖\n\n` +
         `👾 *Version:* v${packageJson.version}\n` +
-        `🧠 *Processor:* ${processor}\n` +
+        `🧠 *Processor:* ${os.cpus()[0].model}\n` +
         `⏰ *Uptime:* ${uptimeStr}\n` +
         `💾 *Memory:* ${formatBytes(process.memoryUsage().heapUsed)}\n` +
         `👑 *Owner:* ${owner.join(", ")}\n\n` +
@@ -80,7 +35,8 @@ Oblixn.cmd({
   },
 });
 
-global.Oblixn.cmd({
+// Command: !help
+Oblixn.cmd({
   name: "help",
   alias: ["menu", "?"],
   desc: "Menampilkan daftar perintah yang tersedia",
@@ -90,39 +46,15 @@ global.Oblixn.cmd({
       const commands = [];
       const isOwner = config.owner.includes(msg.sender.split("@")[0]);
 
-      if (!Oblixn || !Oblixn.commands) {
-        throw new Error("Commands belum diinisialisasi");
-      }
-
       // Kumpulkan semua command yang valid
-      if (Oblixn.commands instanceof Map) {
-        for (const [_, cmd] of Oblixn.commands) {
-          if (cmd && cmd.name && cmd.category) {
-            // Hanya tambahkan command jika bukan owner/ownercommand atau user adalah owner
-            if (
-              isOwner ||
-              (cmd.category !== "owner" && cmd.category !== "ownercommand")
-            ) {
-              commands.push({
-                name: cmd.name,
-                category: cmd.category,
-              });
-            }
-          }
-        }
-      } else {
-        for (const cmd of Object.values(Oblixn.commands)) {
-          if (cmd && cmd.name && cmd.category) {
-            // Hanya tambahkan command jika bukan owner/ownercommand atau user adalah owner
-            if (
-              isOwner ||
-              (cmd.category !== "owner" && cmd.category !== "ownercommand")
-            ) {
-              commands.push({
-                name: cmd.name,
-                category: cmd.category,
-              });
-            }
+      for (const [_, cmd] of Oblixn.commands) {
+        if (cmd && cmd.name && cmd.category) {
+          // Hanya tambahkan command jika bukan owner/ownercommand atau user adalah owner
+          if (isOwner || (cmd.category !== "owner" && cmd.category !== "ownercommand")) {
+            commands.push({
+              name: cmd.name,
+              category: cmd.category,
+            });
           }
         }
       }
@@ -160,14 +92,36 @@ global.Oblixn.cmd({
 
       await msg.reply(helpMessage);
     } catch (error) {
-      botLogger.error("Error dalam command help:", {
-        message: error.message,
-        stack: error.stack,
-      });
+      botLogger.error("Error dalam command help:", error);
       await msg.reply("Terjadi kesalahan saat menampilkan menu bantuan.");
     }
   },
 });
+
+// Command: !changelog
+Oblixn.cmd({
+  name: "changelog",
+  alias: ["update"],
+  desc: "Menampilkan changelog bot",
+  category: "info",
+  async exec(msg) {
+    try {
+      const changelog = path.join(__dirname, "../../changelog.txt");
+      if (!fs.existsSync(changelog)) {
+        return msg.reply("❌ Changelog belum tersedia");
+      }
+
+      const read = fs.readFileSync(changelog, "utf8");
+      const formattedChangelog = "📝 *CHANGELOG BOT*\n\n" + read;
+
+      await msg.reply(formattedChangelog);
+    } catch (error) {
+      botLogger.error("Error dalam command changelog:", error);
+      await msg.reply("❌ Terjadi kesalahan saat menampilkan changelog.");
+    }
+  },
+});
+
 // Fungsi helper untuk format bytes
 function formatBytes(bytes) {
   if (bytes === 0) return "0 B";
@@ -193,35 +147,85 @@ function formatUptime(seconds) {
   return parts.join(" ");
 }
 
-global.Oblixn.cmd({
-  name: "changelog",
-  alias: ["changelog", "update"],
-  desc: "Menampilkan changelog bot",
-  category: "info",
-  async exec(msg) {
-    console.log(msg);
-    try {
-      console.log("Changelog command executed");
-
-      const changelog = path.join(__dirname, "../../changelog.txt");
-      const read = fs.readFileSync(changelog, "utf8");
-            
-      // Format pesan changelog
-      let formattedChangelog = "📝 *CHANGELOG BOT*\n\n";
-      formattedChangelog += read;
-
-      await msg.reply(formattedChangelog);
-    } catch (error) {
-      botLogger.error("Error dalam command changelog:", error);
-      await msg.reply("❌ Terjadi kesalahan saat menampilkan changelog.");
-    }
-  },
-});
-
 async function checkUpdate() {
   try {
     // ... kode yang ada ...
   } catch (error) {
     botLogger.warn(`Gagal memeriksa update: ${error.message}`);
   }
+}
+
+Oblixn.cmd({
+  name: "top",
+  desc: "Leaderboard level",
+  category: "info",
+  async exec(msg) {
+    const [topUsers] = await pool.execute(`
+      SELECT user_id, level, experience 
+      FROM users 
+      ORDER BY experience DESC 
+      LIMIT 10`
+    );
+
+    let leaderboard = "🏆 *TOP 10 PLAYERS* 🏆\n\n";
+    topUsers.forEach((user, index) => {
+      leaderboard += `${index+1}. ${user.user_id} - Level ${user.level} (${user.experience} XP)\n`;
+    });
+
+    await msg.reply(leaderboard);
+  }
+});
+
+Oblixn.cmd({
+  name: "level",
+  desc: "Cek level dan XP",
+  category: "info",
+  async exec(msg) {
+    const [user] = await pool.execute(
+      `SELECT u.*, COUNT(a.achievement_id) as achievements
+       FROM users u
+       LEFT JOIN user_achievements a ON u.user_id = a.user_id
+       WHERE u.user_id = ?`,
+      [msg.sender]
+    );
+
+    const xp = user[0].experience;
+    const currentLevel = calculateLevel(xp);
+    const nextLevelXP = config.leveling.levelFormula(currentLevel);
+    const progress = (xp / nextLevelXP) * 100;
+    
+    const progressBar = createProgressBar(progress);
+    const rank = await getRank(msg.sender);
+
+    const response = `🏅 *Level Info* 🏅
+📊 Level: ${currentLevel}
+⭐ XP: ${xp}/${nextLevelXP}
+${progressBar}
+🏆 Achievements: ${user[0].achievements}
+📈 Daily XP: ${user[0].daily_xp}/${config.leveling.dailyCap}
+📉 Weekly XP: ${user[0].weekly_xp}/${config.leveling.weeklyCap}
+🏅 Rank: #${rank}
+
+Gunakan command !top untuk melihat leaderboard`;
+
+    await msg.reply(response);
+  }
+});
+
+function createProgressBar(percentage) {
+  const filled = '█'.repeat(Math.round(percentage/10));
+  const empty = '░'.repeat(10 - filled.length);
+  return `[${filled}${empty}] ${Math.round(percentage)}%`;
+}
+
+async function getRank(userId) {
+  const [rank] = await pool.execute(`
+    SELECT position FROM (
+      SELECT user_id, RANK() OVER (ORDER BY experience DESC) as position
+      FROM users
+    ) ranks 
+    WHERE user_id = ?`,
+    [userId]
+  );
+  return rank[0].position;
 }
