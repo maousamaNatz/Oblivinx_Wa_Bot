@@ -106,54 +106,14 @@ Chatbot_whatsapp/
 └── bot.sql               # Skema database
 ```
 
-## 📐 Arsitektur Sistem
-```mermaid
-flowchart TD
-    A[Pengguna] --> B[Pesan WhatsApp]
-    B --> C{Command?}
-    C -->|Ya| D[Command Handler]
-    C -->|Tidak| E[AI Processing]
-    
-    D --> F[Database MySQL]
-    E --> F
-    
-    subgraph Database
-        F --> G[Tabel Users]
-        F --> H[Tabel Groups]
-        F --> I[Tabel BannedUsers]
-        F --> J[Tabel BotInstances]
-        F --> K[Tabel Leaderboard]
-        F --> L[Tabel GroupSettings]
-        F --> M[Tabel UserActivityLogs]
-        F --> N[Tabel BotQRCodes]
-        
-        G -->|One-to-Many| H
-        G -->|One-to-Many| I
-        H -->|One-to-Many| L
-        G -->|One-to-Many| K
-        G -->|One-to-Many| M
-        J -->|One-to-One| N
-    end
-    
-    F --> O[Response Generator]
-    O --> A
-```
-
 ## 📝 Penggunaan
 ### Command Dasar
 ```
 !help - Menampilkan menu bantuan
 !ping - Cek status bot
 !info - Info sistem bot
-!donate - Support pengembangan
 ```
 
-### Contoh AI
-```
-!gpt <pertanyaan> - Tanya ke GPT-4
-!dalle <prompt> - Generate gambar AI
-!translate <teks> - Terjemahkan teks
-```
 
 ## ❓ FAQ
 ### 🔄 Reset Session
@@ -204,6 +164,6 @@ Proyek ini dilisensikan di bawah [MIT License](LICENSE) dengan tambahan ketentua
 Lihat [CONTRIBUTING.md](CONTRIBUTING.md) untuk panduan lengkap. 
 
 **Kontak Tim:**
-- Email: dev@orbitstudio.id
+- Email: -
 - Discord: [Join Server](https://discord.gg/orbitstudio)
 - Dokumentasi: [docs.orbitstudio.id](https://docs.orbitstudio.id)
