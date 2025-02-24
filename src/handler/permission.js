@@ -13,24 +13,19 @@ async function isAdmin(groupId, userId, verbose = false) {
         // Dapatkan metadata grup
         const metadata = await sock.groupMetadata(groupId);
         
-        // Debug log hanya jika verbose = true
         if (verbose) {
-            botLogger.info('Group Information:');
-            botLogger.info(`├─ ID: ${metadata.id}`);
-            botLogger.info(`├─ Name: ${metadata.subject}`);
-            botLogger.info('└─ Participants:');
-            metadata.participants.forEach((p, i) => {
-                const isLast = i === metadata.participants.length - 1;
-                const prefix = isLast ? '    └─' : '    ├─';
-                botLogger.info(`${prefix} ${p.id} (${p.admin || 'member'})`);
-            });
-
-            botLogger.info(`Checking admin status for user: ${userId}`);
+            botLogger.info('Group Information:', metadata);
         }
 
-        // Cek status admin
-        const participant = metadata.participants.find(p => p.id.split(':')[0] === userId.split(':')[0]);
-        return participant?.admin === 'admin' || participant?.admin === 'superadmin';
+        // Normalisasi ID pengguna dengan toLowerCase
+        const normalizedUserId = userId.split('@')[0].toLowerCase();
+
+        // Cari peserta dengan perbandingan ID case-insensitive
+        const participant = metadata.participants.find(p => {
+            return p.id.split('@')[0].toLowerCase() === normalizedUserId;
+        });
+        
+        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
     } catch (error) {
         botLogger.error('Error checking admin status:', error);
         return false;

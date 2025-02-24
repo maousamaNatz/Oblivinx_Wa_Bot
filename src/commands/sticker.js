@@ -19,10 +19,10 @@ global.Oblixn.cmd({
             const isDirectImage = msg.message?.imageMessage;
             const isDirectVideo = msg.message?.videoMessage;
 
-            // Cek quoted media
-            const quotedMsg = msg.quoted;
-            const isQuotedImage = quotedMsg?.message?.imageMessage;
-            const isQuotedVideo = quotedMsg?.message?.videoMessage;
+            // Cek quoted media dari struktur extendedTextMessage.contextInfo
+            const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            const isQuotedImage = quotedMsg?.imageMessage;
+            const isQuotedVideo = quotedMsg?.videoMessage;
 
             // Gabungkan pengecekan
             const hasValidMedia = isDirectImage || isDirectVideo || isQuotedImage || isQuotedVideo;
@@ -34,7 +34,7 @@ global.Oblixn.cmd({
             await msg.reply('⏳ Sedang membuat sticker...');
 
             // Tentukan message yang berisi media
-            const mediaMsg = (isDirectImage || isDirectVideo) ? msg : quotedMsg;
+            const mediaMsg = (isDirectImage || isDirectVideo) ? msg : { message: quotedMsg };
             const isImage = isDirectImage || isQuotedImage;
 
             // Download media
