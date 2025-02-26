@@ -76,7 +76,7 @@ async function handleUnban(sock, msg, userId) {
 function setupGlobalErrorHandlers() {
   process.on("unhandledRejection", (reason, promise) => {
     if (reason.message.includes("Timed Out")) {
-      botLogger.warning("Timeout detected, attempting to reconnect...");
+      botLogger.warn("Timeout detected, attempting to reconnect...");
       if (!global.isConnected && retryCount < MAX_RETRIES) {
         setTimeout(async () => {
           try {

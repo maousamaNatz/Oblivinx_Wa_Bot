@@ -1,4 +1,4 @@
-const { botLogger } = require("../utils/logger");
+const { botLogger, toggleDebug, getDebugStatus } = require("../utils/logger");
 const { config, categoryEmojis } = require("../../config/config");
 const os = require("os");
 const packageJson = require("../../package.json");
@@ -51,10 +51,12 @@ Oblixn.cmd({
         if (cmd && cmd.name && cmd.category) {
           // Hanya tambahkan command jika bukan owner/ownercommand atau user adalah owner
           if (isOwner || (cmd.category !== "owner" && cmd.category !== "ownercommand")) {
+            
             commands.push({
               name: cmd.name,
               category: cmd.category,
             });
+            
           }
         }
       }
@@ -82,7 +84,7 @@ Oblixn.cmd({
           const emoji = categoryEmojis[category.toLowerCase()] || "❓";
           helpMessage += `${emoji} *${category.toUpperCase()}*\n`;
           cmds.forEach((cmd) => {
-            helpMessage += `• ${process.env.PREFIX || "!"}${cmd.name}\n`;
+            helpMessage += `> ${process.env.PREFIX || "!"}${cmd.name}\n`;
           });
           helpMessage += "\n";
         }
@@ -118,6 +120,59 @@ Oblixn.cmd({
     } catch (error) {
       botLogger.error("Error dalam command changelog:", error);
       await msg.reply("❌ Terjadi kesalahan saat menampilkan changelog.");
+    }
+  },
+});
+
+// Command: !debug
+Oblixn.cmd({
+  name: "debug",
+  alias: ["debugmode"],
+  desc: "Mengaktifkan atau menonaktifkan mode debug",
+  category: "owner",
+  isOwner: true,
+  async exec(msg, { args }) {
+    try {
+      // Hanya owner yang bisa menggunakan command ini
+      if (!global.Oblixn.isOwner(msg.sender)) {
+        return msg.reply("❌ Command ini hanya untuk owner bot!");
+      }
+
+      const subCommand = args[0]?.toLowerCase();
+      const currentStatus = getDebugStatus();
+
+      if (subCommand === "on" || subCommand === "aktif") {
+        // Aktifkan debug mode
+        if (currentStatus) {
+          return msg.reply("Mode debug sudah aktif!");
+        }
+        
+        toggleDebug(true);
+        return msg.reply("Mode debug berhasil diaktifkan!");
+      } 
+      else if (subCommand === "off" || subCommand === "nonaktif") {
+        // Nonaktifkan debug mode
+        if (!currentStatus) {
+          return msg.reply("Mode debug sudah nonaktif!");
+        }
+        
+        toggleDebug(false);
+        return msg.reply("Mode debug berhasil dinonaktifkan!");
+      }
+      else {
+        // Tampilkan status dan bantuan
+        const status = currentStatus ? "aktif" : "nonaktif";
+        return msg.reply(`DEBUG MODE
+        
+Status: ${status}
+
+Penggunaan:
+!debug on - Mengaktifkan mode debug
+!debug off - Menonaktifkan mode debug`);
+      }
+    } catch (error) {
+      botLogger.error("Error dalam command debug: " + error.message);
+      await msg.reply("Terjadi kesalahan saat mengubah mode debug.");
     }
   },
 });

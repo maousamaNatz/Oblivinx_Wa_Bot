@@ -1,49 +1,36 @@
-// const { permissionHandler } = require("../../src/handler/permission");
-// const { generateImageWithAxios } = require("../lib/Ai");
+Oblixn.cmd({
+  name: "ai",
+  alias: ["ai"],
+  desc: "🌤 Mendapatkan informasi cuaca untuk lokasi tertentu",
+  category: "general",
+  async exec(msg, { args, m }) {
+    let text = args.join(" ") || (m.quoted && m.quoted.text);
 
-// module.exports = (Oblixn) => {
-//   Oblixn.cmd({
-//     name: "dalle",
-//     alias: ["generate", "aiimg"],
-//     desc: "Generate gambar dengan DALL-E 3",
-//     category: "ai",
-//     usage: "<prompt>",
-//     async exec(msg, { args, text }) {
-//       try {
-//         // Pengecekan status ban
-//         const { isBanned } = await Oblixn.db.checkBanStatus(msg.sender);
-//         if (isBanned) return;
+    if (!text) {
+      throw "Silakan berikan teks atau kutip pesan untuk mendapatkan respons.";
+    }
 
-//         // Pengecekan izin
-//         const allowed = await permissionHandler.checkAIUsage(msg.sender);
-//         if (!allowed) {
-//           return msg.reply("❌ Akses DALL-E dibatasi. Hubungi admin untuk info lebih lanjut");
-//         }
+    try {
+      if (typeof msg.client?.sendPresenceUpdate === "function") {
+        await msg.client.sendPresenceUpdate("composing", m.chat);
+      }
 
-//         // Validasi prompt
-//         if (!text) return msg.reply("Silakan berikan prompt gambar");
-        
-//         await msg.reply("🎨 Sedang membuat gambar...");
-        
-//         // Generate gambar dengan DALL-E 3
-//         const { success, imageUrl, revisedPrompt, error } = await generateImageWithAxios(text);
-        
-//         if (!success) {
-//           const errorMsg = error?.code === 400 
-//             ? "❌ Prompt tidak sesuai (berisi konten terlarang)"
-//             : `❌ Gagal generate: ${error?.message || 'Kesalahan server'}`;
-//           return msg.reply(errorMsg);
-//         }
+      const prompt = encodeURIComponent(text);
+      const endpoint = `https://ultimetron.guruapi.tech/gita?prompt=${prompt}`;
 
-//         // Kirim gambar hasil generate
-//         await Oblixn.sendFileFromUrl(msg.chat, imageUrl, "dalle-image.jpg", {
-//           caption: `🖼️ *DALL-E Result*\n\n📝 Revised Prompt: ${revisedPrompt}`
-//         });
+      const response = await fetch(endpoint);
 
-//       } catch (error) {
-//         console.error("DALL-E Error:", error);
-//         msg.reply("❌ Timeout atau kesalahan saat memproses gambar");
-//       }
-//     }
-//   });
-// };
+      if (!response.ok) {
+        throw `Gagal mendapatkan respons dari server (Status: ${response.status})`;
+      }
+
+      const data = await response.json();
+      const result = data.completion || "Maaf, tidak ada respons yang tersedia.";
+
+      m.reply(result);
+    } catch (error) {
+      console.error("Error:", error);
+      throw "*ERROR: Terjadi kesalahan saat memproses permintaan.*";
+    }
+  }
+});

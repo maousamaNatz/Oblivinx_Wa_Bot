@@ -428,6 +428,11 @@ const log = (type, message) => {
 // Jalankan cleanup secara berkala
 setInterval(cleanupSessions, config.sessionCleanupInterval);
 
+// Konfigurasi reconnect
+const RECONNECT_INTERVAL = process.env.RECONNECT_INTERVAL ? parseInt(process.env.RECONNECT_INTERVAL) : 10000; // 10 detik default
+const MAX_RECONNECT_RETRIES = process.env.MAX_RECONNECT_RETRIES ? parseInt(process.env.MAX_RECONNECT_RETRIES) : 5;
+const CONNECTION_TIMEOUT = process.env.CONNECTION_TIMEOUT ? parseInt(process.env.CONNECTION_TIMEOUT) : 60000; // 60 detik default
+
 module.exports = {
   config,
   store,
@@ -445,4 +450,7 @@ module.exports = {
   BAN_TYPES,
   log,
   retryCount,
+  RECONNECT_INTERVAL,
+  MAX_RECONNECT_RETRIES,
+  CONNECTION_TIMEOUT,
 };

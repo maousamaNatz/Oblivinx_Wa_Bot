@@ -1,6 +1,6 @@
 const axios = require("axios"),
-  { pinterestCookies } = require("../../config/config"),
-  wiki = require("wikipedia");
+  { pinterestCookies } = require("../../config/config")
+  const wiki = require("wikipedia");
 const PinterestScrapper = require("../lib/scrapper");
 const GempaScraper = require("../lib/gempa");
 const { HttpsProxyAgent } = require("https-proxy-agent");
@@ -68,6 +68,7 @@ Oblixn.cmd({
   category: "search",
   async exec(msg, { args }) {
     try {
+      
       if (!args || args.length === 0) {
         return msg.reply(
           "❗ Silakan berikan kata kunci pencarian\nContoh: .wiki Indonesia"

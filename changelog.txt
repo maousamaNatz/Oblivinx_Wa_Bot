@@ -132,3 +132,53 @@ Tidak Ada
 - Ubah format config database di `.env`
 - Hapus support Node.js < 18.x
 - Perlu install dependensi baru canvas dan nmap
+
+# Changelog v0.0.6 - 2024-02-25
+
+## 🌟 Fitur Baru
+### 🐛 Debug Mode
+- Tambah command `!debug` untuk mengaktifkan/menonaktifkan mode debug
+- Implementasi toggle debug runtime tanpa restart bot
+- Penyimpanan status debug di file .env
+- Optimasi level logging berdasarkan status debug
+
+### 🔄 Sistem Logging
+- Perbaikan format log dengan emoji dan warna
+- Filter log berdasarkan status debug
+- Pemisahan log untuk Baileys dan bot utama
+
+## 🐛 Perbaikan Bug
+- Perbaikan memory leak pada sistem logging
+- Optimasi penggunaan memori saat debug dinonaktifkan
+
+## 📦 Dependensi
+- Tidak ada perubahan
+
+## 📄 Dokumentasi
+- Update README.md dengan informasi fitur debug baru
+- Tambah panduan penggunaan debug mode
+
+## ⚠️ Breaking Changes
+- Tidak ada
+
+# Changelog v0.0.7 - 2024-02-25
+
+## 🔄 Penyederhanaan Sistem
+### 📋 Sistem Logging
+- Penyederhanaan format log menjadi lebih ringkas
+- Pengurangan level log menjadi error, warn, info, debug
+- Penghapusan tampilan emoji dan styling berlebihan
+- Konsolidasi file log menjadi lebih sederhana
+- Penggunaan API logger yang lebih mudah
+
+### 🐛 Debug Mode
+- Penyederhanaan command debug
+- Format pesan debug yang lebih ringkas
+- Pengurangan informasi debug yang tidak perlu
+
+## 🐛 Perbaikan
+- Optimasi penggunaan memori dengan format log yang lebih ringan
+- Pembersihan kode logger yang tidak perlu
+
+## 📄 Dokumentasi
+- Update panduan penggunaan debug mode yang disederhanakan

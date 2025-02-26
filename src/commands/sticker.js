@@ -13,7 +13,6 @@ global.Oblixn.cmd({
         try {
             // Debug log
             console.log('Message type:', msg.mtype);
-            console.log('Message structure:', JSON.stringify(msg.message, null, 2));
 
             // Cek direct media
             const isDirectImage = msg.message?.imageMessage;

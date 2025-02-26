@@ -22,6 +22,7 @@ Bot WhatsApp canggih berbasis Node.js menggunakan [Baileys](https://github.com/W
 - [FAQ](#-faq)
 - [Lisensi](#-lisensi)
 - [Kontribusi](#-kontribusi)
+- [Fitur Baru](#-fitur-baru)
 
 ## 🚀 Fitur Utama
 ### 🤖 Integrasi AI
@@ -114,6 +115,27 @@ Chatbot_whatsapp/
 !info - Info sistem bot
 ```
 
+## Fitur Baru
+
+### Mode Debug
+
+Bot memiliki fitur sederhana untuk mengaktifkan dan menonaktifkan mode debug. Mode debug akan menampilkan log detail yang membantu proses troubleshooting.
+
+**Penggunaan:**
+- `!debug on` - Mengaktifkan mode debug
+- `!debug off` - Menonaktifkan mode debug
+- `!debug` - Melihat status debug saat ini
+
+> Command ini hanya dapat digunakan oleh owner bot.
+
+### Sistem Logging
+
+Bot menggunakan sistem logging yang sederhana dan efisien:
+- **Level log**: error, warn, info, debug
+- **File log**:
+  - `combined.log` - Semua log info dan level di atasnya
+  - `error.log` - Hanya log error
+  - `baileys.log` - Log khusus dari library Baileys
 
 ## ❓ FAQ
 ### 🔄 Reset Session

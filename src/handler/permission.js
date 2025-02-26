@@ -35,7 +35,7 @@ async function isAdmin(groupId, userId, verbose = false) {
 // Fungsi untuk mengatur instance sock
 function setup(sockInstance) {
     sock = sockInstance;
-    botLogger.success('Permission handler setup completed');
+    botLogger.info('Permission handler setup completed');
 }
 
 function registerCommand(config) {
