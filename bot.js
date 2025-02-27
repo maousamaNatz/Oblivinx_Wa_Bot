@@ -51,53 +51,40 @@ if (!process.env.PREFIX || process.env.PREFIX.trim() === "") {
 
 // ====== LOGGER ======
 const log = (type, message) => {
-  // Gunakan fungsi log dari logger.js
   require("./src/utils/logger").log(message, type);
 };
 
 // ====== COMMAND HANDLER ======
-function registerCommand(config, handler) {
-  if (!config.pattern || typeof handler !== "function") {
+function registerCommand(cmdConfig, handler) {
+  if (!cmdConfig.pattern || typeof handler !== "function") {
     throw new Error("Command harus memiliki pattern dan handler.");
   }
-  commands.push({ config, handler });
+  commands.push({ config: cmdConfig, handler });
 }
 
 function executeCommand(sock, msg, sender, command, args) {
-  // Log untuk debugging
   botLogger.info(`Menjalankan command: ${command} dengan args: ${args.join(' ')}`);
-  
   try {
-    // Cari command yang cocok di Oblixn.commands
+    // Cari command di global.Oblixn terlebih dahulu
     if (global.Oblixn && global.Oblixn.commands && global.Oblixn.commands.has(command)) {
       const cmd = global.Oblixn.commands.get(command);
-      // Panggil handler dengan format yang diharapkan
-      return cmd.exec(msg, {
-        args: args
-      });
+      return cmd.exec(msg, { args });
     }
-    
-    // Cek alias jika tidak ditemukan di commands utama
+    // Cek alias bila tidak ditemukan
     if (global.Oblixn && global.Oblixn.commands) {
       for (const [cmdName, cmdObj] of global.Oblixn.commands.entries()) {
         if (cmdObj.alias && cmdObj.alias.includes(command)) {
-          // Panggil handler dengan format yang diharapkan
-          return cmdObj.exec(msg, {
-            args: args
-          });
+          return cmdObj.exec(msg, { args });
         }
       }
     }
-    
-    // Jika tidak ditemukan di Oblixn.commands, coba cari di commands
+    // Jika tidak, cari di commands
     for (const cmd of commands) {
       const pattern = new RegExp(cmd.config.pattern);
       if (pattern.test(command)) {
         return cmd.handler(sock, msg, args);
       }
     }
-    
-    // Jika command tidak ditemukan
     msg.reply(`Maaf, perintah *${command}* tidak ditemukan. Gunakan ${PREFIX}help untuk melihat daftar perintah.`);
     botLogger.warn(`Command tidak ditemukan: ${command}`);
   } catch (error) {
@@ -110,18 +97,14 @@ function executeCommand(sock, msg, sender, command, args) {
 function loadCommands(commandsPath) {
   try {
     botLogger.info(`Loading commands from ${commandsPath}`);
-    
     if (!fs.existsSync(commandsPath)) {
       botLogger.error(`Directory not found: ${commandsPath}`);
       return;
     }
-    
     const files = fs.readdirSync(commandsPath);
     let loadedCount = 0;
-
     files.forEach((file) => {
       const fullPath = path.join(commandsPath, file);
-
       if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
         try {
           require(fullPath);
@@ -131,7 +114,6 @@ function loadCommands(commandsPath) {
         }
       }
     });
-
     botLogger.info(`${loadedCount} command files loaded successfully`);
   } catch (error) {
     botLogger.error(`Error loading commands: ${error.message}`);
@@ -147,23 +129,19 @@ global.Oblixn = {
   commands: new Map(),
   cmd: function (options) {
     const { name, alias = [], desc = "", category = "utility", exec } = options;
-
     if (!name || typeof exec !== "function") {
       throw new Error('Command harus memiliki "name" dan "exec" sebagai function.');
     }
-
     const wrappedExec = async (msg, params) => {
       try {
         if (category !== "owner" && category !== "ownercommand") {
           const userId = msg.sender.split("@")[0];
           let normalizedUserId = userId;
-
           if (normalizedUserId.startsWith("08")) {
             normalizedUserId = "62" + normalizedUserId.slice(1);
           } else if (normalizedUserId.startsWith("+62")) {
             normalizedUserId = normalizedUserId.slice(1);
           }
-
           const { isBanned, banInfo } = await checkBanStatus(normalizedUserId);
           if (isBanned) {
             const banDate = new Date(banInfo.banned_at).toLocaleDateString("id-ID");
@@ -172,43 +150,31 @@ global.Oblixn = {
             return;
           }
         }
-
         return await exec(msg, params);
       } catch (error) {
         botLogger.error(`Error executing command ${name}:`, error);
         msg.reply("Terjadi kesalahan saat menjalankan perintah.");
       }
     };
-
-    const patterns = [name, ...alias].map((cmd) => `^${escapeRegex(cmd)}(?:\\s+(.*))?$`);
-
-    registerCommand(
-      {
-        pattern: patterns[0],
-        secondPattern: patterns.slice(1),
-        fromMe: false,
-        desc,
-        use: category,
-      },
-      wrappedExec
-    );
-
-    this.commands.set(name, {
-      ...options,
-      exec: wrappedExec,
-    });
+    const patterns = [name, ...alias].map((cmd) => `^${escapeRegex(cmd)}(?:\s+(.*))?$`);
+    registerCommand({
+      pattern: patterns[0],
+      secondPattern: patterns.slice(1),
+      fromMe: false,
+      desc,
+      use: category
+    }, wrappedExec);
+    this.commands.set(name, { ...options, exec: wrappedExec });
   },
   isOwner: function (sender) {
     const senderNumber = sender.split("@")[0];
     const ownerNumbers = process.env.OWNER_NUMBER_ONE.split(",").concat(
       process.env.OWNER_NUMBER_TWO ? process.env.OWNER_NUMBER_TWO.split(",") : []
     );
-    const normalizedSender = senderNumber.startsWith("62")
-      ? "0" + senderNumber.slice(2)
-      : senderNumber;
+    const normalizedSender = senderNumber.startsWith("62") ? "0" + senderNumber.slice(2) : senderNumber;
     botLogger.info(`Checking owner: ${normalizedSender}`);
     return ownerNumbers.includes(normalizedSender);
-  },
+  }
 };
 
 // ====== CONNECTION HANDLER ======
@@ -220,44 +186,31 @@ global.otpHandlers = {};
 let reconnectAttempts = 0;
 
 const initBot = async () => {
-  // Jika session utama sudah login, lewati inisialisasi ulang
   if (activeSocket && activeSocket.user) {
     botLogger.info("Session utama sudah login, melewati inisialisasi ulang.");
     return activeSocket;
   }
-
   try {
-    // Fungsi untuk reset state reconnect
     const resetReconnectState = () => {
       isReconnecting = false;
       reconnectAttempts = 0;
     };
 
-    // Fungsi untuk handle reconnect
     const handleReconnect = async () => {
       if (isReconnecting) return;
-      
       isReconnecting = true;
       reconnectAttempts++;
-
       botLogger.info(`Mencoba reconnect... (Percobaan ${reconnectAttempts}/${MAX_RECONNECT_RETRIES})`);
-
       if (reconnectAttempts > MAX_RECONNECT_RETRIES) {
         botLogger.error('Melebihi batas maksimum reconnect, menghentikan bot...');
         process.exit(1);
       }
-
-      // Tunggu sebelum mencoba reconnect
       await new Promise(resolve => setTimeout(resolve, RECONNECT_INTERVAL));
-
       try {
-        // Cleanup socket lama
         if (activeSocket?.ws) {
           activeSocket.ws.close();
           activeSocket.ev.removeAllListeners();
         }
-
-        // Inisialisasi ulang socket
         const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
         activeSocket = makeWASocket({
           auth: state,
@@ -266,20 +219,10 @@ const initBot = async () => {
           browser: ['Oblivinx Bot', 'Chrome', '1.0.0'],
           connectTimeoutMs: CONNECTION_TIMEOUT,
           keepAliveIntervalMs: 30000,
-          retryRequestDelayMs: 5000,
-          maxRetries: 5,
-          shouldIgnoreJid: jid => !jid.endsWith('@s.whatsapp.net'),
-          defaultQueryTimeoutMs: 60000,
-          syncFullHistory: false,
-          markOnlineOnConnect: false
+          retryRequestDelayMs: 5000
         });
-
-        // Set global.activeSocket agar command debug dapat mengaksesnya
         global.activeSocket = activeSocket;
-
-        // Setup event handlers
         setupSocketHandlers(activeSocket, saveCreds);
-
         isReconnecting = false;
       } catch (error) {
         botLogger.error('Gagal melakukan reconnect:', error);
@@ -287,34 +230,24 @@ const initBot = async () => {
       }
     };
 
-    // Setup event handlers
     const setupSocketHandlers = (sock, saveCreds) => {
-      // Gunakan objek untuk menyimpan handler agar bisa dihapus nanti
       const handlers = {
         connectionUpdate: async (update) => {
           const { connection, lastDisconnect, qr } = update;
-
-          // Tampilkan QR code hanya jika sesi belum login
           if (qr && !sock.user) {
             botLogger.info('QR Code baru tersedia, scan untuk login');
           }
-
           if (connection === 'close') {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
-
-            // Jika error adalah stream error (515) namun sesi sudah aktif, abaikan proses reconnect
             if (statusCode === 515 && sock.user) {
               botLogger.warn('Terjadi stream error 515 namun sesi aktif, tidak melakukan reconnect.');
               return;
             }
-
             botLogger.error(`Koneksi terputus dengan status: ${statusCode}, pesan: ${errorMessage}`);
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
             if (shouldReconnect && !isReconnecting) {
               botLogger.info(`Mencoba reconnect dalam ${RECONNECT_INTERVAL/1000} detik...`);
-
               if (errorMessage.includes('conflict')) {
                 botLogger.warn('Terdeteksi konflik sesi, menghapus credentials...');
                 try {
@@ -339,7 +272,6 @@ const initBot = async () => {
               } catch (err) {
                 botLogger.error('Gagal menghapus credentials:', err);
               }
-              
               setTimeout(() => {
                 botLogger.info('Mencoba memulai koneksi baru...');
                 handleReconnect();
@@ -350,40 +282,32 @@ const initBot = async () => {
             resetReconnectState();
           }
         },
-
         credsUpdate: saveCreds,
-
         messagesUpsert: async (m) => {
           try {
             if (isReconnecting) {
               botLogger.info('Skip processing message during reconnection');
               return;
             }
-    
-            // Debugging: Log struktur pesan lengkap
             botLogger.debug(`Struktur pesan: ${JSON.stringify(m, null, 2)}`);
-    
             const msg = m.messages[0];
             if (!msg) {
               botLogger.debug('Pesan kosong, dilewati');
               return;
             }
-    
             const sender = msg.key.remoteJid;
             if (!sender || msg.key.fromMe) {
               botLogger.debug('Pesan dari diri sendiri atau tidak memiliki pengirim, dilewati');
               return;
             }
-    
             const isGroup = sender.endsWith("@g.us");
             const participant = msg.key.participant || msg.participant || sender;
             const messageText = msg.message?.conversation || 
                                msg.message?.extendedTextMessage?.text || 
                                msg.message?.imageMessage?.caption || 
                                msg.message?.buttonsResponseMessage?.selectedButtonId ||
-                               msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId || 
+                               msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId ||
                                "";
-
             const enhancedMsg = {
               ...msg,
               chat: sender,
@@ -408,12 +332,10 @@ const initBot = async () => {
                     throw retryError;
                   }
                 }
-              },
+              }
             };
-    
             if (isGroup) {
               botLogger.info(`Menangani pesan grup dari ${participant} di ${sender}: "${messageText}"`);
-              
               if (messageText.startsWith(PREFIX)) {
                 const parsedCommand = commandHandler(messageText);
                 if (parsedCommand) {
@@ -423,13 +345,11 @@ const initBot = async () => {
                   return;
                 }
               }
-              
               handleGroupMessage(sock, enhancedMsg).catch(error => {
                 botLogger.error(`Error handling group message: ${error.message}`);
               });
               return;
             }
-    
             if (messageText.startsWith(PREFIX)) {
               const parsedCommand = commandHandler(messageText);
               if (parsedCommand) {
@@ -437,7 +357,6 @@ const initBot = async () => {
                 executeCommand(sock, enhancedMsg, sender, command, args);
               }
             }
-    
             const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
             if (quoted && quoted.conversation && quoted.conversation.includes('Balas pesan ini dengan kode OTP')) {
               const match = quoted.conversation.match(/\d+/);
@@ -452,61 +371,34 @@ const initBot = async () => {
             }
           } catch (error) {
             botLogger.error("Error processing message:", error);
-            console.error(error); // Tampilkan stack trace lengkap
+            console.error(error);
           }
         },
-
         call: async (calls) => {
           if (!calls || calls.length === 0) return;
-          
           const call = calls[0];
           if (call.status !== "offer") return;
-          
           const callerId = call.from;
-          
-          // Tambah percobaan panggilan untuk penelepon ini
           callAttempts[callerId] = (callAttempts[callerId] || 0) + 1;
-          
-          // Cek apakah melebihi batas percobaan
           if (callAttempts[callerId] >= MAX_CALL_ATTEMPTS) {
             botLogger.warn(`Pengguna ${callerId} telah mencoba menelepon ${MAX_CALL_ATTEMPTS} kali, memblokir pengguna`);
-            
-            // Kirim pesan peringatan
-            await sock.sendMessage(callerId, {
-              text: `⚠️ *PERINGATAN*\nAnda telah mencoba menelepon bot sebanyak ${MAX_CALL_ATTEMPTS} kali. Nomor Anda akan diblokir oleh sistem.`
-            });
-            
-            // Blokir pengguna
+            await sock.sendMessage(callerId, { text: `⚠️ *PERINGATAN*\nAnda telah mencoba menelepon bot sebanyak ${MAX_CALL_ATTEMPTS} kali. Nomor Anda akan diblokir oleh sistem.` });
             await blockUserBySystem(callerId, "Terlalu banyak percobaan panggilan", "system");
-            
-            // Reset counter
             delete callAttempts[callerId];
             return;
           }
-          
-          // Tolak panggilan
           await sock.rejectCall(call.id, call.from);
-          
-          // Kirim pesan peringatan
-          await sock.sendMessage(callerId, {
-            text: `⚠️ *PERINGATAN*\nBot tidak dapat menerima panggilan. Mohon jangan menelepon bot.\n\nPercobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS}`
-          });
-          
+          await sock.sendMessage(callerId, { text: `⚠️ *PERINGATAN*\nBot tidak dapat menerima panggilan. Mohon jangan menelepon bot.\n\nPercobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS}` });
           botLogger.info(`Panggilan dari ${callerId} ditolak (Percobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS})`);
         }
       };
-
-      // Pasang semua handler
       sock.ev.on('connection.update', handlers.connectionUpdate);
       sock.ev.on('creds.update', handlers.credsUpdate);
       sock.ev.on('messages.upsert', handlers.messagesUpsert);
       sock.ev.on('call', handlers.call);
-
-      // Simpan referensi ke handlers untuk cleanup nanti
       sock._eventHandlers = handlers;
     };
 
-    // Inisialisasi awal dengan konfigurasi yang dioptimalkan
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     activeSocket = makeWASocket({
       auth: state,
@@ -515,12 +407,7 @@ const initBot = async () => {
       browser: ['Oblivinx Bot', 'Chrome', '1.0.0'],
       connectTimeoutMs: CONNECTION_TIMEOUT,
       keepAliveIntervalMs: 30000,
-      retryRequestDelayMs: 5000,
-      maxRetries: 5,
-      shouldIgnoreJid: jid => !jid.endsWith('@s.whatsapp.net'),
-      defaultQueryTimeoutMs: 60000,
-      syncFullHistory: false,
-      markOnlineOnConnect: false
+      retryRequestDelayMs: 5000
     });
 
     store.bind(activeSocket.ev);
@@ -528,7 +415,6 @@ const initBot = async () => {
 
     permissionHandler.setup(activeSocket);
 
-    // Optimasi: Gunakan interval yang lebih efisien
     const clearCacheInterval = setInterval(() => {
       if (global.gc) global.gc();
       store.writeToFile("./baileys_store.json");
@@ -540,10 +426,8 @@ const initBot = async () => {
       botLogger.info(`Memory usage - RSS: ${formatBytes(used.rss)}, Heap: ${formatBytes(used.heapUsed)}`);
     }, config.monitorMemoryInterval);
 
-    // Simpan interval untuk cleanup nanti
     activeSocket._intervals = [clearCacheInterval, monitorMemoryInterval];
 
-    // Setup database global
     global.db = {
       ...global.db,
       banUser: async (userId, reason, bannedBy, banType = BAN_TYPES.MANUAL) => {
@@ -632,7 +516,7 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
 }
 
-// Tambahkan fungsi untuk handle timeout secara global
+// Setup global error handlers
 function setupGlobalErrorHandlers() {
   process.on("unhandledRejection", (reason, promise) => {
     if (reason.message.includes("Timed Out")) {
@@ -647,14 +531,11 @@ function setupGlobalErrorHandlers() {
         }, RETRY_INTERVAL);
       }
     } else {
-      botLogger.error(
-        "Unhandled rejection at " + promise + " reason: " + reason
-      );
+      botLogger.error("Unhandled rejection at " + promise + " reason: " + reason);
     }
   });
 }
 
-// Fungsi untuk memulai semua bot yang tersimpan
 async function initializeAllBots() {
   try {
     const [bots] = await pool.query('SELECT number, credentials FROM bot_instances WHERE status = "active"');
@@ -672,16 +553,12 @@ async function initializeAllBots() {
 }
 
 // Panggil saat bot utama mulai
-// Hapus pemanggilan initBot() duplikat untuk menghindari re-inisialisasi
 initializeAllBots();
 
 (async () => {
   botLogger.info("Starting bot...");
   setupGlobalErrorHandlers();
-
-  // Load commands dari direktori src/commands
   loadCommands(path.join(__dirname, "src/commands"));
-
   try {
     await initBot();
   } catch (error) {
@@ -695,7 +572,7 @@ process.on("uncaughtException", (err) => {
   if(botLogger) {
     botLogger.error("Uncaught Exception: " + err);
   } else {
-    console.error("Fallback error logging:", err); // Fallback jika logger gagal
+    console.error("Fallback error logging:", err);
   }
   process.exit(1);
 });
@@ -733,14 +610,10 @@ async function checkBanStatus(userId) {
     };
   } catch (error) {
     botLogger.error("Error memeriksa status ban:", error);
-    return {
-      isBanned: false,
-      banInfo: null,
-    };
+    return { isBanned: false, banInfo: null };
   }
 }
 
-// Tambahkan cleanup handler untuk SIGINT
 process.on('SIGINT', async () => {
   botLogger.info('Menerima signal SIGINT, membersihkan...');
   if (activeSocket?.ws) {
@@ -753,42 +626,30 @@ process.on('SIGINT', async () => {
 // Fungsi untuk memulai child bot
 async function startChildBot(phoneNumber, credentials) {
     try {
-        // Validasi credentials dan regenerasi jika perlu
         const validateCredentials = (creds) => {
             return creds?.me?.id && 
                    creds?.noiseKey?.length === 32 &&
                    creds?.signedIdentityKey?.length === 32;
         };
 
-        // Jika credentials tidak valid, generate ulang
         if (!validateCredentials(credentials.creds)) {
             console.warn(`⚠️ Regenerasi credentials untuk ${phoneNumber}`);
-            
-            // Generate credentials baru
-            const { state } = await useMultiFileAuthState(
-                path.join(__dirname, `sessions/${phoneNumber}`)
-            );
-            
-            // Update database dengan credentials baru
+            const { state } = await useMultiFileAuthState(path.join(__dirname, `sessions/${phoneNumber}`));
             try {
                 await pool.execute(
                     'UPDATE bot_instances SET credentials = ? WHERE number = ?',
                     [JSON.stringify(state), phoneNumber]
                 );
                 console.log(`✅ Berhasil update credentials ${phoneNumber}`);
-                credentials = state; // Gunakan credentials baru
+                credentials = state;
             } catch (dbError) {
                 console.error('Gagal update database:', dbError);
                 throw new Error('Gagal update credentials di database');
             }
         }
 
-        // Paksa koneksi dengan credentials terbaru
         const childSock = makeWASocket({
-            auth: {
-                ...credentials,
-                mobile: true
-            },
+            auth: { ...credentials, mobile: true },
             browser: ["FORCE-CONNECT", "Chrome", "3.0"],
             version: [3, 3234, 9],
             logger: baileysLogger,
@@ -799,20 +660,16 @@ async function startChildBot(phoneNumber, credentials) {
             keepAliveIntervalMs: 7200000 
         });
 
-        // Paksa update connection state
         childSock.ev.on('connection.update', (update) => {
             const { connection, lastDisconnect, qr } = update;
-            
             if (qr && !childSock.user) {
                 console.log('⚠️ QR Code diperlukan untuk', phoneNumber);
                 handleQrCode(qr, phoneNumber).catch(console.error);
             }
-
             if (connection === 'close') {
                 const statusCode = lastDisconnect.error?.output?.statusCode;
                 if (statusCode === 401 || statusCode === 403 || statusCode === 404) {
-                    // Hapus session jika error auth
-                    fs.rmSync(authFolder, { recursive: true, force: true });
+                    fs.rmSync(path.join(__dirname, `sessions/${phoneNumber}`), { recursive: true, force: true });
                     console.log('⚠️ Session dihapus karena error auth');
                 }
             }
@@ -821,16 +678,11 @@ async function startChildBot(phoneNumber, credentials) {
         return childSock;
     } catch (error) {
         console.error(`🚨 Gagal mutlak untuk ${phoneNumber}:`, error);
-        // Jika tetap gagal, nonaktifkan di database
-        await pool.execute(
-            "UPDATE bot_instances SET status = 'inactive' WHERE number = ?",
-            [phoneNumber]
-        );
+        await pool.execute("UPDATE bot_instances SET status = 'inactive' WHERE number = ?", [phoneNumber]);
         throw new Error(`Di nonaktifkan otomatis: ${error.message}`);
     }
 }
 
-// Tambahkan cleanup handler untuk child bots
 process.on('SIGINT', async () => {
     console.log('\n🛑 Cleaning up child bots...');
     for (const [number, sock] of global.childBots) {
@@ -840,13 +692,9 @@ process.on('SIGINT', async () => {
     process.exit(0);
 });
 
-// Auto-start child bots
 async function startChildBots() {
     try {
-        const [rows] = await pool.execute(
-            'SELECT number FROM bot_instances WHERE status = "active"'
-        );
-        
+        const [rows] = await pool.execute('SELECT number FROM bot_instances WHERE status = "active"');
         for (const row of rows) {
             if(row.number !== config.mainNumber) {
                 await initializeBot(row.number);
@@ -857,7 +705,6 @@ async function startChildBots() {
     }
 }
 
-// Panggil fungsi setelah bot utama ready
 startChildBots();
 
 if (!global.childBots) {
@@ -865,12 +712,9 @@ if (!global.childBots) {
 }
 
 async function initializeBot(phoneNumber) {
-    let sock = null; // Deklarasi eksplisit dengan nilai null
-    
+    let sock = null;
     try {
         const authFolder = path.join(__dirname, `sessions/${phoneNumber}`);
-        
-        // 1. Cleanup session korup
         if (fs.existsSync(authFolder)) {
             const sessionFiles = fs.readdirSync(authFolder);
             if (sessionFiles.length === 0) {
@@ -878,14 +722,9 @@ async function initializeBot(phoneNumber) {
                 console.log(`🗑 Session kosong dihapus untuk ${phoneNumber}`);
             }
         }
-
-        // 2. Inisialisasi socket
         const { state, saveCreds } = await useMultiFileAuthState(authFolder);
         sock = makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: state.keys
-            },
+            auth: { creds: state.creds, keys: state.keys },
             logger: baileysLogger,
             msgRetryCounterCache,
             getMessage: async key => {
@@ -894,8 +733,6 @@ async function initializeBot(phoneNumber) {
             connectTimeoutMs: 30000,
             keepAliveIntervalMs: 15000
         });
-
-        // 3. Pasang event handlers
         const setupEventHandlers = () => {
             sock.ev.on('connection.update', (update) => {
                 const { connection, lastDisconnect } = update;
@@ -905,29 +742,19 @@ async function initializeBot(phoneNumber) {
                     console.log(`✅ Koneksi ${phoneNumber} stabil`);
                 }
             });
-
             sock.ev.on('creds.update', saveCreds);
         };
-
         setupEventHandlers();
-
-        // 4. Simpan ke global map
         global.childBots.set(phoneNumber, sock);
         console.log(`🤖 Bot ${phoneNumber} berhasil diinisialisasi`);
-
         return sock;
-
     } catch (error) {
         console.error(`❌ Gagal inisialisasi bot ${phoneNumber}:`, error);
-        
-        // 5. Cleanup jika sock sempat terinisialisasi
         if (sock !== null) {
             sock.ev.removeAllListeners();
             sock.ws.close();
         }
-        
-        // 6. Hapus session yang gagal
-        fs.rmSync(authFolder, { recursive: true, force: true });
+        fs.rmSync(path.join(__dirname, `sessions/${phoneNumber}`), { recursive: true, force: true });
         throw error;
     }
 }
@@ -942,15 +769,12 @@ process.on('exit', () => {
 });
 
 const commandHandler = (text) => {
-  const pattern = /^[!\/\.](\w+)(?:\s+(.*))?$/i;  // Format: !command args
+  const pattern = /^[!\/\.](\w+)(?:\s+(.*))?$/i;
   const match = text.match(pattern);
-  
   if (match) {
     const command = match[1].toLowerCase();
-    // Jika ada args (match[2]), split menjadi array, jika tidak ada args, berikan array kosong
     const args = match[2] ? match[2].trim().split(/\s+/) : [];
     return { command, args };
   }
-  
   return null;
-};  
+};

@@ -1,4 +1,5 @@
 const { botLogger } = require("../utils/logger");
+const permissionHandler = require("./permission");
 
 // Fungsi untuk menangani pesan grup
 async function handleGroupMessage(sock, msg) {
@@ -24,12 +25,12 @@ async function handleGroupMessage(sock, msg) {
     }
 
     const { sender, messageText, chat } = msg;
-
     botLogger.info(`Menangani pesan grup dari ${sender}: "${messageText}"`);
 
-    // Jika pesan dimulai dengan prefix, anggap sebagai command
+    // Tambahkan log untuk melihat hasil parsing command
     if (messageText.startsWith(process.env.PREFIX)) {
       const parsedCommand = commandHandler(messageText);
+      botLogger.debug(`Hasil parser command: ${JSON.stringify(parsedCommand)}`);
       if (parsedCommand) {
         const { command, args } = parsedCommand;
         botLogger.info(`Menjalankan command grup: ${command} dengan args: ${args.join(' ')}`);
@@ -37,7 +38,11 @@ async function handleGroupMessage(sock, msg) {
         const { executeCommand } = require("../../bot");
         executeCommand(sock, msg, sender, command, args);
         return;
+      } else {
+        botLogger.warn("Command tidak terparsing dengan benar.");
       }
+    } else {
+      botLogger.debug("Pesan tidak diawali prefix, melewati perintah.");
     }
 
     // Tambahkan logika lain untuk menangani pesan grup di sini jika diperlukan
