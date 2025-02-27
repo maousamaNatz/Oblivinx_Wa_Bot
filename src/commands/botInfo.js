@@ -14,17 +14,25 @@ Oblixn.cmd({
   category: "info",
   async exec(msg) {
     try {
+      // Pastikan msg.reply ada
+      if (typeof msg.reply !== 'function') {
+        msg.reply = (text) => { console.log('Reply:', text); };
+      }
+
       const { botName, owner } = config;
+      // Pastikan owner berupa array
+      const ownerArray = Array.isArray(owner) ? owner : [owner];
+
       const uptime = process.uptime();
       const uptimeStr = formatUptime(uptime);
 
       const infoText =
-        `🤖 *${botName} BOT INFO* 🤖\n\n` +
+        `🤖 *${botName || 'Bot'} BOT INFO* 🤖\n\n` +
         `👾 *Version:* v${packageJson.version}\n` +
         `🧠 *Processor:* ${os.cpus()[0].model}\n` +
         `⏰ *Uptime:* ${uptimeStr}\n` +
         `💾 *Memory:* ${formatBytes(process.memoryUsage().heapUsed)}\n` +
-        `👑 *Owner:* ${owner.join(", ")}\n\n` +
+        `👑 *Owner:* ${ownerArray.join(", ")}\n\n` +
         `Gunakan *!help* untuk melihat daftar perintah.`;
 
       await msg.reply(infoText);

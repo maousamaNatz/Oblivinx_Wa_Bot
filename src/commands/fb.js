@@ -2,10 +2,11 @@ const { downloadFbVideo, getFbVideoInfo } = require("../lib/fbDownloader");
 const { formatBytes, formatDuration } = require("../utils/helper");
 const fs = require("fs");
 const path = require("path");
-
-module.exports = {
+Oblixn.cmd({
   name: 'fb',
-  description: 'Facebook downloader command',
+  alias: ['fbdownloader'],
+  desc: 'Download video dari Facebook',
+  category: 'tools',
   async exec({ msg, args }) {
     try {
       const { isBanned } = await Oblixn.db.checkBanStatus(msg.sender);
@@ -70,4 +71,4 @@ module.exports = {
         error.message}`);
     }
   }
-};
+});

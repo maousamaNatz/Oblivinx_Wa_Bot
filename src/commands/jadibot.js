@@ -9,7 +9,7 @@ const {
 } = require("../../config/dbConf/database");
 const { promises: fs } = require("fs");
 const path = require("path");
-const { baileysLogger ,color, botLogger } = require('../../src/utils/logger');
+const { baileysLogger, color, botLogger } = require('../../src/utils/logger');
 
 async function createSubBotSession(phoneNumber) {
   const authFolder = path.join(
@@ -28,14 +28,14 @@ async function createSubBotSession(phoneNumber) {
       return { success: false, message: "Nomor sudah terdaftar" };
     }
 
-    // Cek folder session dengan access
+    // Periksa folder session dan buat jika belum ada
     try {
       await fs.access(authFolder);
     } catch {
       await fs.mkdir(authFolder, { recursive: true });
     }
 
-    // Generate credentials
+    // Generate credentials menggunakan multi file auth state
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
     // Gunakan config yang sesuai dengan versi terbaru Baileys
@@ -79,73 +79,94 @@ async function createSubBotSession(phoneNumber) {
   }
 }
 
-  Oblixn.cmd({
-    name: 'jadibot',
-    alias: ['otplogin', 'botregister'],
-    desc: 'Aktifkan bot kedua via OTP',
-    category: 'owner',
-    async exec(msg, { args }) {
-      try {
-        // Cek izin owner
-        if (!permissionHandler.isOwner(msg.sender)) {
-          return msg.reply('❌ Hanya owner yang bisa menggunakan fitur ini');
-        }
-
-        const targetNumber = args[0] || '6282133839877';
-        
-        const sock = makeWASocket({
-          auth: {
-            phoneNumber: targetNumber,
-          },
-          logger: baileysLogger,
-          printQRInTerminal: false
-        });
-
-        // Minta OTP via SMS
-        const { code, timeout } = await sock.requestRegistrationCode({ 
-          phoneNumber: targetNumber,
-          method: 'sms'
-        });
-
-        await msg.reply(`📲 OTP dikirim ke *${targetNumber}*. Balas pesan ini dengan kode OTP yang diterima dalam 2 menit`);
-
-        // Handler untuk verifikasi OTP
-        Oblixn.otpHandlers[targetNumber] = async (otp) => {
-          try {
-            await sock.registerCode(otp, code);
-            
-            // Simpan credentials ke database
-            const authFolder = path.join(__dirname, `../../auth_info_baileys/${targetNumber}`);
-            const credentials = JSON.parse(fs.readFileSync(path.join(authFolder, 'creds.json')));
-            await saveBotCredentials(targetNumber, credentials);
-            
-            // Tambahkan ke child bots
-            await initializeBot(targetNumber); // Pindahkan inisialisasi ke fungsi yang benar
-            
-            await msg.reply(`✅ Bot *${targetNumber}* berhasil diaktifkan!`);
-          } catch (error) {
-            console.error('OTP Error:', error);
-            await msg.reply(`❌ Gagal verifikasi OTP: ${error.message}`);
-          }
-        };
-
-        // Timeout handler
-        setTimeout(() => {
-          delete Oblixn.otpHandlers[targetNumber];
-          msg.reply('⌛ Waktu verifikasi OTP habis');
-        }, 120000);
-
-      } catch (error) {
-        console.error('Jadibot Error:', error);
-        msg.reply(`❌ Gagal memproses: ${error.message}`);
+Oblixn.cmd({
+  name: 'jadibot',
+  alias: ['otplogin', 'botregister'],
+  desc: 'Aktifkan bot kedua via OTP',
+  category: 'owner',
+  async exec(msg, { args }) {
+    try {
+      // Cek izin owner
+      if (!permissionHandler.isOwner(msg.sender)) {
+        return msg.reply('❌ Hanya owner yang bisa menggunakan fitur ini');
       }
+
+      const targetNumber = args[0] || '6282133839877';
+      
+      // Buat folder untuk menyimpan kredensial OTP jika belum ada
+      const authFolder = path.join(__dirname, `../../auth_info_baileys/${targetNumber}`);
+      try {
+        await fs.access(authFolder);
+      } catch {
+        await fs.mkdir(authFolder, { recursive: true });
+      }
+      
+      // Membuat sock untuk OTP menggunakan konfigurasi minimal
+      const sock = makeWASocket({
+        auth: {
+          phoneNumber: targetNumber,
+        },
+        logger: baileysLogger,
+        printQRInTerminal: false
+      });
+
+      // Minta OTP via SMS
+      const { code, timeout } = await sock.requestRegistrationCode({
+        phoneNumber: targetNumber,
+        method: 'sms'
+      });
+
+      await msg.reply(`📲 OTP dikirim ke *${targetNumber}*. Balas pesan ini dengan kode OTP yang diterima dalam 2 menit`);
+
+      // Handler untuk verifikasi OTP
+      Oblixn.otpHandlers[targetNumber] = async (otp) => {
+        try {
+          await sock.registerCode(otp, code);
+          
+          // Baca kredensial dari file (gunakan asinkron)
+          const credsPath = path.join(authFolder, 'creds.json');
+          const credsContent = await fs.readFile(credsPath, 'utf-8');
+          const credentials = JSON.parse(credsContent);
+          await saveBotCredentials(targetNumber, credentials);
+          
+          // Tambahkan bot anak dengan memanggil fungsi startChildBot
+          // Pastikan fungsi startChildBot menerima parameter: number, credentials, dan Oblixn (objek global)
+          await startChildBot(targetNumber, credentials, Oblixn);
+          
+          await msg.reply(`✅ Bot *${targetNumber}* berhasil diaktifkan!`);
+        } catch (error) {
+          console.error('OTP Error:', error);
+          await msg.reply(`❌ Gagal verifikasi OTP: ${error.message}`);
+        }
+      };
+
+      // Timeout handler untuk OTP
+      setTimeout(() => {
+        delete Oblixn.otpHandlers[targetNumber];
+        msg.reply('⌛ Waktu verifikasi OTP habis');
+      }, 120000);
+
+    } catch (error) {
+      console.error('Jadibot Error:', error);
+      msg.reply(`❌ Gagal memproses: ${error.message}`);
     }
-  });
+  }
+});
 
 async function startChildBot(number, credentials, Oblixn) {
   try {
+    // Inisialisasi session bot anak.
+    // Jika Anda lebih memilih, Anda bisa menggunakan folder yang sama (misal: auth_info_baileys) atau folder lain (misal: sessions)
+    // Di sini kami menggunakan folder sessions untuk inisialisasi bot anak.
+    const sessionFolder = path.join(__dirname, `../../sessions/${number}`);
+    try {
+      await fs.access(sessionFolder);
+    } catch {
+      await fs.mkdir(sessionFolder, { recursive: true });
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(
-      `sessions/${number}`,
+      sessionFolder,
       credentials
     );
 
@@ -163,14 +184,27 @@ async function startChildBot(number, credentials, Oblixn) {
     });
 
     bot.ev.on("messages.upsert", ({ messages }) => {
-      const m = messages[0];
-      if (!m.message || m.key.fromMe) return;
+      messages.forEach((m) => {
+        // Abaikan jika tidak ada pesan atau pesan dikirim oleh bot sendiri
+        if (!m.message || m.key.fromMe) return;
 
-      if (m.message.conversation) {
-        bot.sendMessage(m.key.remoteJid, {
-          text: `Bot anak menerima pesan: ${m.message.conversation}`,
-        });
-      }
+        let text = "";
+        // Jika properti 'conversation' ada, gunakan itu
+        if (m.message.conversation) {
+          text = m.message.conversation;
+        }
+        // Jika pesan dalam grup menggunakan extendedTextMessage
+        else if (m.message.extendedTextMessage && m.message.extendedTextMessage.text) {
+          text = m.message.extendedTextMessage.text;
+        }
+
+        // Jika ada teks yang berhasil diambil, kirim respons
+        if (text) {
+          bot.sendMessage(m.key.remoteJid, {
+            text: `Bot anak menerima pesan: ${text}`,
+          });
+        }
+      });
     });
 
     bot.ev.on("creds.update", saveCreds);
@@ -187,7 +221,7 @@ async function startChildBot(number, credentials, Oblixn) {
 async function initializeMainBot() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState(
-      `auth_info_baileys/main_bot`
+      path.join(__dirname, '../../auth_info_baileys/main_bot')
     );
 
     const mainBot = makeWASocket({

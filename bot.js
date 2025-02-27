@@ -65,47 +65,77 @@ function registerCommand(config, handler) {
 
 function executeCommand(sock, msg, sender, command, args) {
   // Log untuk debugging
-  if (getDebugStatus()) {
-    botLogger.debug(`Menjalankan command: ${command} (${args.join(' ')})`);
-  } else {
-    botLogger.info(`Menjalankan command: ${command}`);
-  }
+  botLogger.info(`Menjalankan command: ${command} dengan args: ${args.join(' ')}`);
   
-  // Cari command yang cocok di Oblixn.commands
-  if (global.Oblixn.commands.has(command)) {
-    const cmd = global.Oblixn.commands.get(command);
-    // Panggil handler dengan format yang diharapkan
-    return cmd.exec(msg, {
-      args: args
-    });
-  }
-  
-  // Cek alias jika tidak ditemukan di commands utama
-  for (const [cmdName, cmdObj] of global.Oblixn.commands.entries()) {
-    if (cmdObj.alias && cmdObj.alias.includes(command)) {
+  try {
+    // Cari command yang cocok di Oblixn.commands
+    if (global.Oblixn && global.Oblixn.commands && global.Oblixn.commands.has(command)) {
+      const cmd = global.Oblixn.commands.get(command);
       // Panggil handler dengan format yang diharapkan
-      return cmdObj.exec(msg, {
+      return cmd.exec(msg, {
         args: args
       });
     }
+    
+    // Cek alias jika tidak ditemukan di commands utama
+    if (global.Oblixn && global.Oblixn.commands) {
+      for (const [cmdName, cmdObj] of global.Oblixn.commands.entries()) {
+        if (cmdObj.alias && cmdObj.alias.includes(command)) {
+          // Panggil handler dengan format yang diharapkan
+          return cmdObj.exec(msg, {
+            args: args
+          });
+        }
+      }
+    }
+    
+    // Jika tidak ditemukan di Oblixn.commands, coba cari di commands
+    for (const cmd of commands) {
+      const pattern = new RegExp(cmd.config.pattern);
+      if (pattern.test(command)) {
+        return cmd.handler(sock, msg, args);
+      }
+    }
+    
+    // Jika command tidak ditemukan
+    msg.reply(`Maaf, perintah *${command}* tidak ditemukan. Gunakan ${PREFIX}help untuk melihat daftar perintah.`);
+    botLogger.warn(`Command tidak ditemukan: ${command}`);
+  } catch (error) {
+    botLogger.error(`Error menjalankan command ${command}: ${error.message}`);
+    msg.reply(`Terjadi kesalahan saat menjalankan perintah: ${error.message}`);
   }
-  
-  botLogger.warn(`Command tidak ditemukan: ${command}`);
 }
 
 // ====== LOAD COMMANDS ======
 function loadCommands(commandsPath) {
-  const files = fs.readdirSync(commandsPath);
-
-  files.forEach((file) => {
-    const fullPath = path.join(commandsPath, file);
-
-    if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
-      require(fullPath);
+  try {
+    botLogger.info(`Loading commands from ${commandsPath}`);
+    
+    if (!fs.existsSync(commandsPath)) {
+      botLogger.error(`Directory not found: ${commandsPath}`);
+      return;
     }
-  });
+    
+    const files = fs.readdirSync(commandsPath);
+    let loadedCount = 0;
 
-  log("INFO", "Command berhasil di load");
+    files.forEach((file) => {
+      const fullPath = path.join(commandsPath, file);
+
+      if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
+        try {
+          require(fullPath);
+          loadedCount++;
+        } catch (error) {
+          botLogger.error(`Error loading command file ${file}: ${error.message}`);
+        }
+      }
+    });
+
+    botLogger.info(`${loadedCount} command files loaded successfully`);
+  } catch (error) {
+    botLogger.error(`Error loading commands: ${error.message}`);
+  }
 }
 
 // ====== DEFINE OBLIXN CMD ======
@@ -188,7 +218,6 @@ let isReconnecting = false;
 global.otpHandlers = {};
 
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 5;
 
 const initBot = async () => {
   // Jika session utama sudah login, lewati inisialisasi ulang
@@ -198,11 +227,6 @@ const initBot = async () => {
   }
 
   try {
-    // Tambahkan state untuk tracking reconnect
-    let isReconnecting = false;
-    let reconnectAttempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 5;
-
     // Fungsi untuk reset state reconnect
     const resetReconnectState = () => {
       isReconnecting = false;
@@ -216,9 +240,9 @@ const initBot = async () => {
       isReconnecting = true;
       reconnectAttempts++;
 
-      botLogger.info(`Mencoba reconnect... (Percobaan ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+      botLogger.info(`Mencoba reconnect... (Percobaan ${reconnectAttempts}/${MAX_RECONNECT_RETRIES})`);
 
-      if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      if (reconnectAttempts > MAX_RECONNECT_RETRIES) {
         botLogger.error('Melebihi batas maksimum reconnect, menghentikan bot...');
         process.exit(1);
       }
@@ -240,7 +264,7 @@ const initBot = async () => {
           printQRInTerminal: true,
           logger: baileysLogger,
           browser: ['Oblivinx Bot', 'Chrome', '1.0.0'],
-          connectTimeoutMs: 60000,
+          connectTimeoutMs: CONNECTION_TIMEOUT,
           keepAliveIntervalMs: 30000,
           retryRequestDelayMs: 5000,
           maxRetries: 5,
@@ -250,8 +274,8 @@ const initBot = async () => {
           markOnlineOnConnect: false
         });
 
-        // Bind store ke socket baru
-        store.bind(activeSocket.ev);
+        // Set global.activeSocket agar command debug dapat mengaksesnya
+        global.activeSocket = activeSocket;
 
         // Setup event handlers
         setupSocketHandlers(activeSocket, saveCreds);
@@ -265,156 +289,231 @@ const initBot = async () => {
 
     // Setup event handlers
     const setupSocketHandlers = (sock, saveCreds) => {
-      sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+      // Gunakan objek untuk menyimpan handler agar bisa dihapus nanti
+      const handlers = {
+        connectionUpdate: async (update) => {
+          const { connection, lastDisconnect, qr } = update;
 
-        // Tampilkan QR code hanya jika sesi belum login
-        if (qr && !sock.user) {
-          botLogger.info('QR Code baru tersedia, scan untuk login');
-        }
-
-        if (connection === 'close') {
-          const statusCode = lastDisconnect?.error?.output?.statusCode;
-          const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
-
-          // Jika error adalah stream error (515) namun sesi sudah aktif, abaikan proses reconnect
-          if (statusCode === 515 && sock.user) {
-            botLogger.warn('Terjadi stream error 515 namun sesi aktif, tidak melakukan reconnect.');
-            return;
+          // Tampilkan QR code hanya jika sesi belum login
+          if (qr && !sock.user) {
+            botLogger.info('QR Code baru tersedia, scan untuk login');
           }
 
-          botLogger.error(`Koneksi terputus dengan status: ${statusCode}, pesan: ${errorMessage}`);
-          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+          if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const errorMessage = lastDisconnect?.error?.message || 'Unknown error';
 
-          if (shouldReconnect && !isReconnecting) {
-            botLogger.info(`Mencoba reconnect dalam ${RECONNECT_INTERVAL/1000} detik...`);
+            // Jika error adalah stream error (515) namun sesi sudah aktif, abaikan proses reconnect
+            if (statusCode === 515 && sock.user) {
+              botLogger.warn('Terjadi stream error 515 namun sesi aktif, tidak melakukan reconnect.');
+              return;
+            }
 
-            if (errorMessage.includes('conflict')) {
-              botLogger.warn('Terdeteksi konflik sesi, menghapus credentials...');
+            botLogger.error(`Koneksi terputus dengan status: ${statusCode}, pesan: ${errorMessage}`);
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+            if (shouldReconnect && !isReconnecting) {
+              botLogger.info(`Mencoba reconnect dalam ${RECONNECT_INTERVAL/1000} detik...`);
+
+              if (errorMessage.includes('conflict')) {
+                botLogger.warn('Terdeteksi konflik sesi, menghapus credentials...');
+                try {
+                  const authDir = path.join(process.cwd(), 'auth_info_baileys');
+                  if (fs.existsSync(authDir)) {
+                    fs.rmSync(authDir, { recursive: true, force: true });
+                    botLogger.info('Berhasil menghapus credentials yang konflik');
+                  }
+                } catch (err) {
+                  botLogger.error('Gagal menghapus credentials:', err);
+                }
+              }
+              handleReconnect();
+            } else if (statusCode === DisconnectReason.loggedOut) {
+              botLogger.warn('Anda telah logout, silakan scan QR code baru untuk login kembali');
               try {
                 const authDir = path.join(process.cwd(), 'auth_info_baileys');
                 if (fs.existsSync(authDir)) {
                   fs.rmSync(authDir, { recursive: true, force: true });
-                  botLogger.info('Berhasil menghapus credentials yang konflik');
+                  botLogger.info('Berhasil menghapus credentials setelah logout');
                 }
               } catch (err) {
                 botLogger.error('Gagal menghapus credentials:', err);
               }
+              
+              setTimeout(() => {
+                botLogger.info('Mencoba memulai koneksi baru...');
+                handleReconnect();
+              }, RECONNECT_INTERVAL);
             }
-            handleReconnect();
-          } else if (statusCode === DisconnectReason.loggedOut) {
-            botLogger.warn('Anda telah logout, silakan scan QR code baru untuk login kembali');
-            try {
-              const authDir = path.join(process.cwd(), 'auth_info_baileys');
-              if (fs.existsSync(authDir)) {
-                fs.rmSync(authDir, { recursive: true, force: true });
-                botLogger.info('Berhasil menghapus credentials setelah logout');
-              }
-            } catch (err) {
-              botLogger.error('Gagal menghapus credentials:', err);
-            }
-            
-            setTimeout(() => {
-              botLogger.info('Mencoba memulai koneksi baru...');
-              handleReconnect();
-            }, RECONNECT_INTERVAL);
+          } else if (connection === 'open') {
+            botLogger.info('Koneksi terbuka!');
+            resetReconnectState();
           }
-        } else if (connection === 'open') {
-          botLogger.info('Koneksi terbuka!');
-          resetReconnectState();
-        }
-      });
+        },
 
-      sock.ev.on('creds.update', saveCreds);
+        credsUpdate: saveCreds,
 
-      // Handle pesan masuk
-      sock.ev.on("messages.upsert", async (m) => {
-        try {
-          if (isReconnecting) {
-            botLogger.info('Skip processing message during reconnection');
+        messagesUpsert: async (m) => {
+          try {
+            if (isReconnecting) {
+              botLogger.info('Skip processing message during reconnection');
+              return;
+            }
+    
+            // Debugging: Log struktur pesan lengkap
+            botLogger.debug(`Struktur pesan: ${JSON.stringify(m, null, 2)}`);
+    
+            const msg = m.messages[0];
+            if (!msg) {
+              botLogger.debug('Pesan kosong, dilewati');
+              return;
+            }
+    
+            const sender = msg.key.remoteJid;
+            if (!sender || msg.key.fromMe) {
+              botLogger.debug('Pesan dari diri sendiri atau tidak memiliki pengirim, dilewati');
+              return;
+            }
+    
+            const isGroup = sender.endsWith("@g.us");
+            const participant = msg.key.participant || msg.participant || sender;
+            const messageText = msg.message?.conversation || 
+                               msg.message?.extendedTextMessage?.text || 
+                               msg.message?.imageMessage?.caption || 
+                               msg.message?.buttonsResponseMessage?.selectedButtonId ||
+                               msg.message?.listResponseMessage?.singleSelectReply?.selectedRowId || 
+                               "";
+
+            const enhancedMsg = {
+              ...msg,
+              chat: sender,
+              from: sender,
+              sender: participant,
+              isGroup: isGroup,
+              botNumber: sock.user.id,
+              pushName: msg.pushName,
+              messageText: messageText,
+              mentions: msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [],
+              reply: async (content) => {
+                try {
+                  const messageContent = typeof content === "object" ? content : { text: String(content) };
+                  return await sock.sendMessage(sender, messageContent, { quoted: msg });
+                } catch (error) {
+                  botLogger.error(`Error mengirim balasan: ${error.message}`);
+                  try {
+                    const messageContent = typeof content === "object" ? content : { text: String(content) };
+                    return await sock.sendMessage(sender, messageContent);
+                  } catch (retryError) {
+                    botLogger.error(`Gagal kirim ulang: ${retryError.message}`);
+                    throw retryError;
+                  }
+                }
+              },
+            };
+    
+            if (isGroup) {
+              botLogger.info(`Menangani pesan grup dari ${participant} di ${sender}: "${messageText}"`);
+              
+              if (messageText.startsWith(PREFIX)) {
+                const parsedCommand = commandHandler(messageText);
+                if (parsedCommand) {
+                  const { command, args } = parsedCommand;
+                  botLogger.info(`Menjalankan command grup: ${command} dengan args: ${args.join(' ')}`);
+                  executeCommand(sock, enhancedMsg, sender, command, args);
+                  return;
+                }
+              }
+              
+              handleGroupMessage(sock, enhancedMsg).catch(error => {
+                botLogger.error(`Error handling group message: ${error.message}`);
+              });
+              return;
+            }
+    
+            if (messageText.startsWith(PREFIX)) {
+              const parsedCommand = commandHandler(messageText);
+              if (parsedCommand) {
+                const { command, args } = parsedCommand;
+                executeCommand(sock, enhancedMsg, sender, command, args);
+              }
+            }
+    
+            const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (quoted && quoted.conversation && quoted.conversation.includes('Balas pesan ini dengan kode OTP')) {
+              const match = quoted.conversation.match(/\d+/);
+              if (match) {
+                const targetNumber = match[0];
+                if (global.otpHandlers[targetNumber]) {
+                  const otp = msg.message.extendedTextMessage.text;
+                  await global.otpHandlers[targetNumber](otp);
+                  delete global.otpHandlers[targetNumber];
+                }
+              }
+            }
+          } catch (error) {
+            botLogger.error("Error processing message:", error);
+            console.error(error); // Tampilkan stack trace lengkap
+          }
+        },
+
+        call: async (calls) => {
+          if (!calls || calls.length === 0) return;
+          
+          const call = calls[0];
+          if (call.status !== "offer") return;
+          
+          const callerId = call.from;
+          
+          // Tambah percobaan panggilan untuk penelepon ini
+          callAttempts[callerId] = (callAttempts[callerId] || 0) + 1;
+          
+          // Cek apakah melebihi batas percobaan
+          if (callAttempts[callerId] >= MAX_CALL_ATTEMPTS) {
+            botLogger.warn(`Pengguna ${callerId} telah mencoba menelepon ${MAX_CALL_ATTEMPTS} kali, memblokir pengguna`);
+            
+            // Kirim pesan peringatan
+            await sock.sendMessage(callerId, {
+              text: `⚠️ *PERINGATAN*\nAnda telah mencoba menelepon bot sebanyak ${MAX_CALL_ATTEMPTS} kali. Nomor Anda akan diblokir oleh sistem.`
+            });
+            
+            // Blokir pengguna
+            await blockUserBySystem(callerId, "Terlalu banyak percobaan panggilan", "system");
+            
+            // Reset counter
+            delete callAttempts[callerId];
             return;
           }
-
-          const msg = m.messages[0];
-          if (!msg.message) return;
-
-          const sender = msg.key.remoteJid;
-          if (!sender || msg.key.fromMe) return;
-
-          const isGroup = sender.endsWith("@g.us");
-          const participant = msg.key.participant || msg.participant || sender;
-          let senderNumber = (isGroup ? participant : sender).split("@")[0];
-
-          if (senderNumber.startsWith("62") && /^62[8-9][0-9]{8,11}$/.test(senderNumber)) {
-            try {
-              await registerUser(senderNumber, msg.pushName);
-            } catch (error) {
-              console.error("Error registering user:", error);
-            }
-          }
-
-          const lastMessageTime = messageQueue.get(sender) || 0;
-          const now = Date.now();
-          if (now - lastMessageTime < RATE_LIMIT) return;
-          messageQueue.set(sender, now);
-
-          const enhancedMsg = {
-            ...msg,
-            chat: sender,
-            from: sender,
-            sender: participant,
-            isGroup: isGroup,
-            botNumber: activeSocket.user.id,
-            pushName: msg.pushName,
-            mentions: msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [],
-            reply: async (content) => {
-              let messageContent = typeof content === "object" ? content : { text: String(content) };
-              return await activeSocket.sendMessage(sender, messageContent, { quoted: msg });
-            },
-          };
-
-          const messageText = msg.message?.conversation || 
-            msg.message?.extendedTextMessage?.text || 
-            msg.message?.imageMessage?.caption || "";
-
-          if (messageText.startsWith(PREFIX)) {
-            const parsedCommand = commandHandler(messageText);
-            
-            if (parsedCommand) {
-              // Gunakan hasil parsing dari commandHandler
-              const { command, args } = parsedCommand;
-              
-              // Log untuk debugging
-              botLogger.info(`Command: ${command}, Args: ${JSON.stringify(args)}`);
-              
-              // Panggil executeCommand dengan command yang sudah di-parse
-              executeCommand(activeSocket, enhancedMsg, sender, command, args);
-            }
-          }
-
-          const quoted = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-          if (quoted && quoted.conversation.includes('Balas pesan ini dengan kode OTP')) {
-            const targetNumber = quoted.conversation.match(/\d+/)[0];
-            if (global.otpHandlers[targetNumber]) {
-              const otp = msg.message.extendedTextMessage.text;
-              await global.otpHandlers[targetNumber](otp);
-              delete global.otpHandlers[targetNumber];
-            }
-          }
-        } catch (error) {
-          botLogger.error("Error processing message:", error);
+          
+          // Tolak panggilan
+          await sock.rejectCall(call.id, call.from);
+          
+          // Kirim pesan peringatan
+          await sock.sendMessage(callerId, {
+            text: `⚠️ *PERINGATAN*\nBot tidak dapat menerima panggilan. Mohon jangan menelepon bot.\n\nPercobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS}`
+          });
+          
+          botLogger.info(`Panggilan dari ${callerId} ditolak (Percobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS})`);
         }
-      });
+      };
+
+      // Pasang semua handler
+      sock.ev.on('connection.update', handlers.connectionUpdate);
+      sock.ev.on('creds.update', handlers.credsUpdate);
+      sock.ev.on('messages.upsert', handlers.messagesUpsert);
+      sock.ev.on('call', handlers.call);
+
+      // Simpan referensi ke handlers untuk cleanup nanti
+      sock._eventHandlers = handlers;
     };
 
-    // Inisialisasi awal
+    // Inisialisasi awal dengan konfigurasi yang dioptimalkan
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
     activeSocket = makeWASocket({
       auth: state,
       printQRInTerminal: true,
       logger: baileysLogger,
       browser: ['Oblivinx Bot', 'Chrome', '1.0.0'],
-      connectTimeoutMs: 60000,
+      connectTimeoutMs: CONNECTION_TIMEOUT,
       keepAliveIntervalMs: 30000,
       retryRequestDelayMs: 5000,
       maxRetries: 5,
@@ -429,31 +528,22 @@ const initBot = async () => {
 
     permissionHandler.setup(activeSocket);
 
-    setInterval(() => {
+    // Optimasi: Gunakan interval yang lebih efisien
+    const clearCacheInterval = setInterval(() => {
       if (global.gc) global.gc();
       store.writeToFile("./baileys_store.json");
       botLogger.info("Cache cleared automatically");
     }, config.clearCacheInterval);
 
-    setInterval(() => {
+    const monitorMemoryInterval = setInterval(() => {
       const used = process.memoryUsage();
       botLogger.info(`Memory usage - RSS: ${formatBytes(used.rss)}, Heap: ${formatBytes(used.heapUsed)}`);
     }, config.monitorMemoryInterval);
 
-    activeSocket.ev.on("history.notification", (notification) => {
-      botLogger.info(`History notification received: syncType=${notification.syncType}`);
-    });
+    // Simpan interval untuk cleanup nanti
+    activeSocket._intervals = [clearCacheInterval, monitorMemoryInterval];
 
-    activeSocket.ev.on("error", (err) => {
-      botLogger.error("WebSocket Error:", err);
-      global.isConnected = false;
-    });
-
-    activeSocket.ev.on("close", () => {
-      botLogger.info("Connection closed");
-      global.isConnected = false;
-    });
-
+    // Setup database global
     global.db = {
       ...global.db,
       banUser: async (userId, reason, bannedBy, banType = BAN_TYPES.MANUAL) => {
@@ -471,7 +561,7 @@ const initBot = async () => {
           );
           return result;
         } catch (error) {
-          console.error(`Error in banUser: ${error.message}`);
+          botLogger.error(`Error in banUser: ${error.message}`);
           throw error;
         }
       },
@@ -490,7 +580,7 @@ const initBot = async () => {
           );
           return result;
         } catch (error) {
-          console.error(`Error in blockUser: ${error.message}`);
+          botLogger.error(`Error in blockUser: ${error.message}`);
           throw error;
         }
       },
@@ -507,7 +597,7 @@ const initBot = async () => {
           );
           return result.affectedRows > 0;
         } catch (error) {
-          console.error(`Error in unblockUser: ${error.message}`);
+          botLogger.error(`Error in unblockUser: ${error.message}`);
           throw error;
         }
       },
@@ -520,50 +610,11 @@ const initBot = async () => {
           );
           return rows.length > 0;
         } catch (error) {
-          console.error(`Error in isBlocked: ${error.message}`);
+          botLogger.error(`Error in isBlocked: ${error.message}`);
           return false;
         }
       }
     };
-
-    activeSocket.ev.on("call", async (calls) => {
-      if (!calls || calls.length === 0) return;
-      
-      const call = calls[0];
-      if (call.status !== "offer") return;
-      
-      const callerId = call.from;
-      
-      // Tambah percobaan panggilan untuk penelepon ini
-      callAttempts[callerId] = (callAttempts[callerId] || 0) + 1;
-      
-      // Cek apakah melebihi batas percobaan
-      if (callAttempts[callerId] >= MAX_CALL_ATTEMPTS) {
-        botLogger.warn(`Pengguna ${callerId} telah mencoba menelepon ${MAX_CALL_ATTEMPTS} kali, memblokir pengguna`);
-        
-        // Kirim pesan peringatan
-        await activeSocket.sendMessage(callerId, {
-          text: `⚠️ *PERINGATAN*\nAnda telah mencoba menelepon bot sebanyak ${MAX_CALL_ATTEMPTS} kali. Nomor Anda akan diblokir oleh sistem.`
-        });
-        
-        // Blokir pengguna
-        await blockUserBySystem(callerId, "Terlalu banyak percobaan panggilan", "system");
-        
-        // Reset counter
-        delete callAttempts[callerId];
-        return;
-      }
-      
-      // Tolak panggilan
-      await activeSocket.rejectCall(call.id, call.from);
-      
-      // Kirim pesan peringatan
-      await activeSocket.sendMessage(callerId, {
-        text: `⚠️ *PERINGATAN*\nBot tidak dapat menerima panggilan. Mohon jangan menelepon bot.\n\nPercobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS}`
-      });
-      
-      botLogger.info(`Panggilan dari ${callerId} ditolak (Percobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS})`);
-    });
 
     return activeSocket;
   } catch (error) {
@@ -686,20 +737,6 @@ async function checkBanStatus(userId) {
       isBanned: false,
       banInfo: null,
     };
-  }
-}
-
-// Contoh penggunaan fungsi banUser
-async function handleBanCommand(userId, reason, bannedBy) {
-  try {
-    const result = await banUser(userId, reason, bannedBy);
-    if (result.success) {
-      console.log(result.message);
-    } else {
-      console.error(result.message);
-    }
-  } catch (error) {
-    console.error("Error handling ban command:", error);
   }
 }
 
@@ -916,4 +953,4 @@ const commandHandler = (text) => {
   }
   
   return null;
-};
+};  

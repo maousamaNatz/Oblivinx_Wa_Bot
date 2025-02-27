@@ -64,46 +64,43 @@ const handleMediafireDownload = async (url) => {
   };
 };
 
-// Tiktok handler
-async function AlienAlfaTiktok(Url) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const initialResponse = await axios({
-        url: "https://ttdownloader.com/",
-        method: "GET",
-        headers: {
-          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36",
-          "cookie": "_ga=GA1.2.1240046717.1620835673; PHPSESSID=i14curq5t8omcljj1hlle52762; popCookie=1; _gid=GA1.2.1936694796.1623913934"
-        }
-      });
+// Fungsi handler TikTok (improved)
+async function downloadTiktok(url) {
+  try {
+    const initialResponse = await axios({
+      url: "https://ttdownloader.com/",
+      method: "GET",
+      headers: {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36",
+        "cookie": "_ga=GA1.2.1240046717.1620835673; PHPSESSID=i14curq5t8omcljj1hlle52762; popCookie=1; _gid=GA1.2.1936694796.1623913934"
+      }
+    });
 
-      const $ = cheerio.load(initialResponse.data);
-      const token = $('#token').attr('value');
+    // Mengambil token dari halaman awal
+    const $ = cheerio.load(initialResponse.data);
+    const token = $('#token').attr('value');
+    if (!token) throw new Error("Token tidak ditemukan");
 
-      const postResponse = await axios({
-        url: "https://ttdownloader.com/req/",
-        method: "POST",
-        data: new URLSearchParams({ url: Url, format: "", token }),
-        headers: {
-          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36"
-        }
-      });
+    const postResponse = await axios({
+      url: "https://ttdownloader.com/req/",
+      method: "POST",
+      data: new URLSearchParams({ url, format: "", token }),
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36"
+      }
+    });
 
-      const resultPage = cheerio.load(postResponse.data);
-      resolve({
-        status: postResponse.status,
-        result: {
-          nowatermark: resultPage('#results-list > div:nth-child(2) div.download > a').attr('href'),
-          watermark: resultPage('#results-list > div:nth-child(3) div.download > a').attr('href'),
-          audio: resultPage('#results-list > div:nth-child(4) div.download > a').attr('href')
-        }
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
+    const resultPage = cheerio.load(postResponse.data);
+    return {
+      nowatermark: resultPage('#results-list > div:nth-child(2) div.download > a').attr('href'),
+      watermark: resultPage('#results-list > div:nth-child(3) div.download > a').attr('href'),
+      audio: resultPage('#results-list > div:nth-child(4) div.download > a').attr('href')
+    };
+  } catch (error) {
+    throw error;
+  }
 }
 
 // Instagram handler
@@ -259,7 +256,7 @@ global.Oblixn.cmd({
   },
 });
 
-// Tiktok Command
+// TikTok Command (improved)
 global.Oblixn.cmd({
   name: "tiktok",
   alias: ["tt", "ttdl"],
@@ -272,7 +269,7 @@ global.Oblixn.cmd({
         return msg.reply("❌ Masukkan URL TikTok yang valid");
       }
 
-      const { result } = await AlienAlfaTiktok(url);
+      const result = await downloadTiktok(url);
       if (!result.nowatermark) {
         return msg.reply("❌ Gagal mengambil video. Coba beberapa saat lagi");
       }
@@ -281,7 +278,6 @@ global.Oblixn.cmd({
         video: { url: result.nowatermark },
         caption: "🎵 TikTok Download - Tanpa Watermark"
       }, { quoted: msg });
-
     } catch (error) {
       botLogger.error("Error download TikTok:", error);
       msg.reply("❌ Gagal mendownload. Pastikan link valid dan tidak private");
@@ -289,7 +285,7 @@ global.Oblixn.cmd({
   }
 });
 
-// Instagram Command
+// Instagram Command (igdl) - Improved
 global.Oblixn.cmd({
   name: "igdl",
   alias: ["ig", "igdownload", "instagram"],
@@ -299,11 +295,17 @@ global.Oblixn.cmd({
     try {
       const url = args[0] || text;
       if (!url) return msg.reply("❌ URL Instagram tidak valid");
-      
+
       const igDownloader = new InstagramDownloader();
-      if (igDownloader.headers.cookie.includes("sessionid=668Q96838382%3AVyZSFuT0tzrMwv%3A16%3AAYd5KFWjTKjomxrySjP6kJJmgE1pR_eFJNSK9nmwzg;")) {
-        return msg.reply("🔑 Update session ID Instagram di environment variables");
+      
+      // Gunakan session ID dari environment variable
+      const session = process.env.INSTAGRAM_SESSION;
+      if (!session) {
+        return msg.reply("🔑 Instagram session belum diatur. Harap set environment variable INSTAGRAM_SESSION.");
       }
+      
+      // Set cookie menggunakan session yang valid
+      igDownloader.headers.cookie = session;
 
       const result = await handleInstagramMedia(igDownloader, url, msg);
       botLogger.info(`Berhasil Instagram: ${result.url || url}`);

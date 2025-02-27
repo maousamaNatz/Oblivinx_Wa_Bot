@@ -269,8 +269,11 @@ let config = {
     emitOwnEvents: false,
     logger: false,
     getMessage: async (key) => {
-      return { conversation: "hello" };
+      return {
+        conversation: '(Pesan tidak tersedia di cache)'
+      };
     },
+    shouldIgnoreJid: jid => isJidBroadcast(jid), // Hanya abaikan broadcast lists
   },
   author: {
     author1: {
