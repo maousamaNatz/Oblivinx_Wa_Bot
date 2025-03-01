@@ -10,21 +10,43 @@ let sock = null;
  */
 async function isAdmin(groupId, userId, verbose = false) {
     try {
+        if (!sock) {
+            botLogger.error('Socket belum diinisialisasi');
+            return false;
+        }
+
         // Dapatkan metadata grup
         const metadata = await sock.groupMetadata(groupId);
         
-        if (verbose) {
-            botLogger.info('Group Information:', metadata);
+        if (!metadata) {
+            botLogger.error('Metadata grup tidak ditemukan');
+            return false;
         }
 
-        // Normalisasi ID pengguna dengan toLowerCase
-        const normalizedUserId = userId.split('@')[0].toLowerCase();
+        if (verbose) {
+            botLogger.info('Group Information:', {
+                groupId,
+                userId,
+                participantsCount: metadata.participants.length
+            });
+        }
 
-        // Cari peserta dengan perbandingan ID case-insensitive
+        // Normalisasi ID pengguna
+        const normalizedUserId = userId.toLowerCase().replace(/[^0-9]/g, '');
+
+        // Cari peserta dengan perbandingan ID yang dinormalisasi
         const participant = metadata.participants.find(p => {
-            return p.id.split('@')[0].toLowerCase() === normalizedUserId;
+            const participantId = p.id.toLowerCase().replace(/[^0-9]/g, '');
+            return participantId === normalizedUserId;
         });
-        
+
+        if (verbose) {
+            botLogger.info('Participant found:', {
+                found: !!participant,
+                admin: participant?.admin
+            });
+        }
+
         return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
     } catch (error) {
         botLogger.error('Error checking admin status:', error);
@@ -32,6 +54,74 @@ async function isAdmin(groupId, userId, verbose = false) {
     }
 }
 
+/**
+ * Memeriksa apakah bot adalah admin dalam grup
+ * @param {string} groupId - ID grup
+ * @returns {Promise<boolean>} - true jika bot adalah admin
+ */
+async function isBotAdmin(groupId) {
+    try {
+        if (!sock) {
+            botLogger.error('Socket belum diinisialisasi');
+            return false;
+        }
+
+        // Dapatkan ID bot
+        const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        
+        // Dapatkan metadata grup
+        const metadata = await sock.groupMetadata(groupId);
+        
+        if (!metadata) {
+            botLogger.error('Metadata grup tidak ditemukan');
+            return false;
+        }
+
+        // Cari bot dalam daftar peserta
+        const botParticipant = metadata.participants.find(p => 
+            p.id.toLowerCase() === botId.toLowerCase()
+        );
+
+        const isAdmin = botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin');
+        
+        botLogger.info('Bot admin status:', {
+            groupId,
+            botId,
+            isAdmin
+        });
+
+        return isAdmin;
+    } catch (error) {
+        botLogger.error('Error checking bot admin status:', error);
+        return false;
+    }
+}
+
+/**
+ * Memeriksa status admin untuk bot dan pengguna sekaligus
+ * @param {string} groupId - ID grup
+ * @param {string} userId - ID pengguna
+ * @returns {Promise<{isUserAdmin: boolean, isBotAdmin: boolean}>}
+ */
+async function checkAdminStatus(groupId, userId) {
+    try {
+        const [userAdmin, botAdmin] = await Promise.all([
+            isAdmin(groupId, userId),
+            isBotAdmin(groupId)
+        ]);
+
+        return {
+            isUserAdmin: userAdmin,
+            isBotAdmin: botAdmin
+        };
+    } catch (error) {
+        botLogger.error('Error checking admin status:', error);
+        return {
+            isUserAdmin: false,
+            isBotAdmin: false
+        };
+    }
+}
 // Fungsi untuk mengatur instance sock
 function setup(sockInstance) {
     sock = sockInstance;
@@ -53,7 +143,7 @@ async function checkAIUsage(userId) {
 }
 
 // Definisikan permissionHandler sebagai sebuah objek yang berisi semua fungsi
-const permissionHandler = { isAdmin, setup, registerCommand, checkStalkUsage, checkAIUsage };
+const permissionHandler = { isAdmin, setup, registerCommand, checkStalkUsage, checkAIUsage, checkAdminStatus , isBotAdmin};
 
 // Ubah module.exports untuk mendukung impor langsung dan terdestrukturisasi
 module.exports = Object.assign({}, permissionHandler, { permissionHandler });

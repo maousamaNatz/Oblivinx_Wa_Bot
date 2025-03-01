@@ -110,7 +110,7 @@ const categoryEmojis = {
   crypto: "🪙",
   tools: "🛠️",
   memo: "📝",
-  AI: "🤖",
+  ai: "🤖",
   admin: "🛡️",
 };
 const pinterestCookies = [
@@ -239,6 +239,7 @@ let config = {
     tebaklagu: loadGameData("tebaklagu.json"),
     rpg: loadGameData("rpg.json"),
     dungeon: loadGameData("dungeon.json"),
+    
   },
   coinmarketcap: {
     apiKey: process.env.COINMARKETCAP_API_KEY,
@@ -456,4 +457,5 @@ module.exports = {
   RECONNECT_INTERVAL,
   MAX_RECONNECT_RETRIES,
   CONNECTION_TIMEOUT,
+  groupCache: new Map(),
 };
