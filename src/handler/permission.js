@@ -33,7 +33,7 @@ async function isAdmin(groupId, userId, verbose = false) {
 
         // Normalisasi ID pengguna
         const normalizedUserId = userId.toLowerCase().replace(/[^0-9]/g, '');
-
+        
         // Cari peserta dengan perbandingan ID yang dinormalisasi
         const participant = metadata.participants.find(p => {
             const participantId = p.id.toLowerCase().replace(/[^0-9]/g, '');
@@ -49,7 +49,7 @@ async function isAdmin(groupId, userId, verbose = false) {
 
         return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
     } catch (error) {
-        botLogger.error('Error checking admin status:', error);
+        botLogger.error('Pesan atau properti chat tidak valid:', error);
         return false;
     }
 }
@@ -92,7 +92,7 @@ async function isBotAdmin(groupId) {
 
         return isAdmin;
     } catch (error) {
-        botLogger.error('Error checking bot admin status:', error);
+        botLogger.error('Pesan atau properti chat tidak valid:', error);
         return false;
     }
 }
@@ -115,13 +115,14 @@ async function checkAdminStatus(groupId, userId) {
             isBotAdmin: botAdmin
         };
     } catch (error) {
-        botLogger.error('Error checking admin status:', error);
+        botLogger.error('Pesan atau properti chat tidak valid:', error);
         return {
             isUserAdmin: false,
             isBotAdmin: false
         };
     }
 }
+
 // Fungsi untuk mengatur instance sock
 function setup(sockInstance) {
     sock = sockInstance;

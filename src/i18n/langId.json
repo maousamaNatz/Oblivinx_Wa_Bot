@@ -1,0 +1,8 @@
+
+{
+  "greeting": "Selamat datang di chatbot!",
+  "help": "Untuk bantuan, ketik !help",
+  "add_member_success": "Berhasil menambahkan anggota ke grup.",
+  "add_member_failure": "Gagal menambahkan anggota. Pastikan nomor valid dan bot adalah admin.",
+  "invalid_format": "Format salah. Gunakan: !add nomor1,nomor2,..."
+}

@@ -457,5 +457,9 @@ module.exports = {
   RECONNECT_INTERVAL,
   MAX_RECONNECT_RETRIES,
   CONNECTION_TIMEOUT,
-  groupCache: new Map(),
+  groupCache: {
+    get: async (jid) => {
+      return store.loadGroupMetadata(jid);
+    }
+  },
 };

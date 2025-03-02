@@ -24,6 +24,9 @@ global.Oblixn.cmd({
       // Jika tidak ada argumen, tampilkan menu pengaturan
       if (!args.length) {
         const settings = await getGroupSettings(groupId);
+        if (!settings) {
+          return msg.reply('❌ Pengaturan grup tidak ditemukan!');
+        }
         const menuText = `*PENGATURAN GRUP*
 
 1. Anti Bot: ${settings?.anti_bot === 'ya' ? '✅' : '❌'}
@@ -52,6 +55,10 @@ Contoh: !groupsetting 1 ya`;
       const [settingNumber, value] = args;
       if (!settingNumber || !value) {
         return msg.reply('❌ Format salah! Gunakan: !groupsetting <nomor> <ya/tidak>');
+      }
+
+      if (settingNumber < 1 || settingNumber > 14) {
+        return msg.reply('❌ Nomor pengaturan harus antara 1 dan 14!');
       }
 
       // Mapping nomor ke nama setting

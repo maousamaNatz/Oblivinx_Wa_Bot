@@ -1,5 +1,6 @@
 const { botLogger } = require('../utils/logger');
 const { PREFIX, commands } = require('../../config/config');
+const { handleGroupMessage } = require('../handler/groupHandler');
 
 /**
  * Menangani pesan yang masuk baik dari pribadi maupun grup.
@@ -14,16 +15,18 @@ async function handleMessage(client, message) {
     const sender = message.sender;
     const chat = message.chat;
     
-    // Ekstrak teks pesan dengan lebih banyak opsi
+    // Ekstrak teks pesan
     const messageText = message.message?.conversation || 
-                       message.message?.extendedTextMessage?.text || 
-                       message.message?.imageMessage?.caption || 
-                       message.message?.buttonsResponseMessage?.selectedButtonId ||
-                       message.message?.listResponseMessage?.singleSelectReply?.selectedRowId || 
-                       "";
+                        message.message?.extendedTextMessage?.text || 
+                        message.message?.imageMessage?.caption || 
+                        message.message?.buttonsResponseMessage?.selectedButtonId ||
+                        message.message?.listResponseMessage?.singleSelectReply?.selectedRowId || 
+                        "";
     
-    // Log untuk debugging
-    botLogger.info(`Pesan dari ${sender} di ${chat}: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
+    // Log untuk debugging dengan detail lebih kompleks
+    botLogger.info(`Pesan diterima dari: ${sender} di chat: ${chat}`);
+    botLogger.info(`Isi pesan: "${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}"`);
+    botLogger.info(`Detail pesan: ${JSON.stringify(message.message, null, 2)}`);
     
     // Jika pesan kosong, keluar
     if (!messageText) {
@@ -31,15 +34,10 @@ async function handleMessage(client, message) {
       return;
     }
     
-    // Periksa apakah pesan dimulai dengan awalan bot (misalnya !, /, .)
-    if (!messageText.startsWith(PREFIX)) {
-      // Jika tidak dimulai dengan PREFIX tapi menyebut @bot, coba proses
-      if (messageText.toLowerCase().includes('@bot')) {
-        // Logika untuk menangani penyebutan bot
-        await message.reply('Hai! Saya bot WhatsApp. Gunakan ' + PREFIX + 'help untuk melihat daftar perintah.');
-        return;
-      }
-      // Jika tidak dimulai dengan PREFIX dan tidak menyebut bot, keluar
+    // Jika pesan berasal dari grup, gunakan handleGroupMessage
+    if (message.isGroup) {
+      botLogger.info(`Pesan berasal dari grup, memanggil handleGroupMessage untuk chat: ${chat}`);
+      await handleGroupMessage(client, message);
       return;
     }
     
@@ -60,6 +58,7 @@ async function handleMessage(client, message) {
         try {
           await cmd.handler(client, message, args);
           foundCommand = true;
+          botLogger.info(`Perintah ${command} berhasil dijalankan.`);
           break;
         } catch (error) {
           botLogger.error(`Error menjalankan perintah ${command}: ${error.message}`);
@@ -76,6 +75,7 @@ async function handleMessage(client, message) {
         try {
           await cmd.exec(message, { args });
           foundCommand = true;
+          botLogger.info(`Perintah Oblixn ${command} berhasil dijalankan.`);
         } catch (error) {
           botLogger.error(`Error menjalankan perintah Oblixn ${command}: ${error.message}`);
           await message.reply(`Terjadi kesalahan saat menjalankan perintah: ${error.message}`);
@@ -88,6 +88,7 @@ async function handleMessage(client, message) {
             try {
               await cmdObj.exec(message, { args });
               foundCommand = true;
+              botLogger.info(`Perintah alias ${cmdName} berhasil dijalankan.`);
               break;
             } catch (error) {
               botLogger.error(`Error menjalankan perintah alias ${command}: ${error.message}`);

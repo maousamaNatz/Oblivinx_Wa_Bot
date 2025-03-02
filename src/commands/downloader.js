@@ -1,10 +1,11 @@
 const youtubedl = require("youtube-dl-exec");
-const path = require("path");
+const path = require("path"); // Deklarasi path hanya sekali di sini
 const { botLogger } = require("../utils/logger");
 const fileManager = require("../../config/memoryAsync/readfile");
 const InstagramDownloader = require("../lib/instadl");
 const axios = require('axios');
 const cheerio = require('cheerio');
+const fs = require("fs"); // Pindahkan fs ke atas untuk konsistensi
 
 // Constants
 const MAX_VIDEO_DURATION = 600; // 10 menit
@@ -77,7 +78,6 @@ async function downloadTiktok(url) {
       }
     });
 
-    // Mengambil token dari halaman awal
     const $ = cheerio.load(initialResponse.data);
     const token = $('#token').attr('value');
     if (!token) throw new Error("Token tidak ditemukan");
@@ -298,13 +298,11 @@ global.Oblixn.cmd({
 
       const igDownloader = new InstagramDownloader();
       
-      // Gunakan session ID dari environment variable
       const session = process.env.INSTAGRAM_SESSION;
       if (!session) {
         return msg.reply("🔑 Instagram session belum diatur. Harap set environment variable INSTAGRAM_SESSION.");
       }
       
-      // Set cookie menggunakan session yang valid
       igDownloader.headers.cookie = session;
 
       const result = await handleInstagramMedia(igDownloader, url, msg);
@@ -325,3 +323,78 @@ function formatDuration(seconds) {
     ? `${hours}:${format(minutes)}:${format(seconds % 60)}`
     : `${minutes}:${format(seconds % 60)}`;
 }
+
+// Facebook Command
+const { downloadFbVideo, getFbVideoInfo } = require("../lib/fbDownloader");
+const { formatBytes } = require("../utils/helper");
+
+global.Oblixn.cmd({
+  name: 'fb',
+  alias: ['fbdownloader'],
+  desc: 'Download video dari Facebook',
+  category: 'tools',
+  async exec({ msg, args }) {
+    try {
+      const { isBanned } = await Oblixn.db.checkBanStatus(msg.sender);
+      if (isBanned) return;
+      
+      const url = args[0] || (msg.quoted?.text?.match(/(https?:\/\/[^\s]+)/gi)?.[0]);
+      if (!url) return msg.reply("Silakan berikan URL Facebook");
+      
+      await Oblixn.sock.sendPresenceUpdate('composing', msg.chat);
+
+      const quality = args.includes("--hd") || args.includes("-h") ? "hd" : "sd";
+      const audioOnly = args.includes("--mp3") || args.includes("-a");
+      const format = audioOnly ? "mp3" : "mp4";
+      const filename = `fb_${Date.now()}_${quality}`;
+
+      const info = await getFbVideoInfo(url);
+      const caption = `📌 *Judul:* ${info.title || '-'}
+👤 *Uploader:* ${info.uploader}
+⏳ *Durasi:* ${formatDuration(info.duration_ms)}
+👀 *Views:* ${info.statistics.views.toLocaleString()}
+❤️ *Likes:* ${info.statistics.likes.toLocaleString()}
+🔄 *Shares:* ${info.statistics.shares.toLocaleString()}
+📅 *Upload Date:* ${new Date(info.uploadDate).toLocaleDateString('id-ID')}
+🔗 *Kualitas:* ${quality.toUpperCase()}
+🎚 *Format:* ${format.toUpperCase()}`;
+
+      await msg.reply(caption);
+      if (info.thumbnail) await msg.reply({ image: { url: info.thumbnail } });
+
+      const progressMsg = await msg.reply("⏳ _Mengunduh video..._");
+      const { path: filePath } = await downloadFbVideo(url, { 
+        quality,
+        format,
+        filename,
+        metadata: true,
+        thumbnail: true,
+        audioOnly
+      });
+      
+      await progressMsg.edit("📤 _Mengunggah video..._");
+      
+      const fileSize = fs.statSync(filePath).size;
+      const fileExt = path.extname(filePath);
+      const sendAsDocument = fileExt !== '.mp4' || audioOnly;
+
+      await msg.reply({
+        [sendAsDocument ? 'document' : 'video']: { 
+          url: `file://${filePath}`,
+          mimetype: sendAsDocument ? undefined : 'video/mp4'
+        },
+        fileName: `${info.title.substring(0, 50)}${fileExt}`,
+        caption: `📁 *File Info*\nUkuran: ${formatBytes(fileSize)}\nFormat: ${format.toUpperCase()}`
+      });
+
+      fs.unlinkSync(filePath);
+      await progressMsg.delete();
+
+    } catch (error) {
+      console.error(error);
+      msg.reply(`❌ Gagal mengunduh: ${error.message.includes('melebihi batas') ? 
+        'Ukuran video terlalu besar' : 
+        error.message}`);
+    }
+  }
+});
