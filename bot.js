@@ -262,11 +262,21 @@ const initBot = async () => {
               return;
             }
 
+            // Tambahkan pengecekan untuk mengabaikan pesan dari bot sendiri
+            if (msg.key.fromMe) {
+              botLogger.info("Mengabaikan pesan dari bot sendiri.");
+              return;
+            }
+
+            if (global.botActive === false) {
+              botLogger.info("Bot dalam status nonaktif, pesan diabaikan.");
+              return;
+            }
+
             const sender = msg.key.remoteJid;
             const isGroup = sender.endsWith("@g.us");
             const participant =
               msg.key.participant || msg.participant || sender;
-
             const messageText =
               msg.message?.conversation ||
               msg.message?.extendedTextMessage?.text ||
@@ -277,10 +287,31 @@ const initBot = async () => {
               msg.message?.extendedTextMessage?.contextInfo?.protocolMessage
                 ?.conversation ||
               "";
-
             let groupInfo = null;
             if (isGroup) {
-              groupInfo = await getGroupAdminInfo(effectiveSock, sender);
+              // Gunakan cache jika tersedia
+              if (groupCache.has(sender)) {
+                groupInfo = groupCache.get(sender);
+                botLogger.info(
+                  `Menggunakan groupInfo dari cache untuk ${sender}`
+                );
+              } else {
+                try {
+                  groupInfo = await getGroupAdminInfo(effectiveSock, sender);
+                  groupCache.set(sender, groupInfo);
+                } catch (error) {
+                  if (error.message === "rate-overlimit") {
+                    botLogger.warn(
+                      "Rate limit tercapai, menunda pengambilan metadata..."
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, 5000)); // Tunggu 5 detik
+                    groupInfo = await getGroupAdminInfo(effectiveSock, sender); // Coba lagi
+                    groupCache.set(sender, groupInfo);
+                  } else {
+                    throw error;
+                  }
+                }
+              }
               botLogger.info(
                 `Group Info - isBotAdmin: ${groupInfo.isBotAdmin}`
               );
@@ -288,7 +319,7 @@ const initBot = async () => {
 
             const enhancedMsg = {
               ...msg,
-              sock: effectiveSock, // Pastikan sock selalu disertakan
+              sock: effectiveSock,
               chat: sender,
               from: sender,
               sender: participant,
@@ -305,7 +336,8 @@ const initBot = async () => {
               pushName: msg.pushName,
               messageText,
               groupMetadata: isGroup
-                ? await effectiveSock.groupMetadata(sender)
+                ? groupCache.get(sender) ||
+                  (await effectiveSock.groupMetadata(sender))
                 : null,
               mentions:
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
@@ -319,7 +351,9 @@ const initBot = async () => {
                   return await effectiveSock.sendMessage(
                     sender,
                     messageContent,
-                    { quoted: msg }
+                    {
+                      quoted: msg,
+                    }
                   );
                 } catch (error) {
                   botLogger.error(`Error mengirim balasan: ${error.message}`, {

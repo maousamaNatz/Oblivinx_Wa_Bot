@@ -1,389 +1,343 @@
 const { botLogger } = require("../utils/logger");
 const { config } = require("../../config/config");
-const { banUser, pool, unbanUser, checkBanStatus, getListBannedUsers } = require("../../config/dbConf/database");
+const {
+  banUser,
+  pool,
+  unbanUser,
+  checkBanStatus,
+  getListBannedUsers,
+} = require("../../config/dbConf/database");
+const { normalizeJid } = require("../handler/permission"); // Impor normalizeJid
 const fs = require("fs");
 const path = require("path");
-Oblixn.cmd({
+
+// ... Command la
+// Command: ownerinfo
+global.Oblixn.cmd({
   name: "ownerinfo",
   alias: ["owner"],
   desc: "Menampilkan informasi owner bot",
   category: "info",
   async exec(msg) {
-
     try {
-      // Dapatkan nomor pengirim dengan format yang benar
-      const senderNumber = msg.sender?.split("@")[0];
-      const owner1 = process.env.OWNER_NUMBER_ONE;
-      const owner2 = process.env.OWNER_NUMBER_TWO;
+      if (!msg.sock) {
+        botLogger.error("Socket tidak tersedia pada msg di ownerinfo");
+        throw new Error("Socket tidak tersedia");
+      }
 
-      // Basic message untuk semua pengguna
-      const basicMessage = `*OWNER BOT CONTACT*
+      const senderNumber = msg.sender?.split("@")[0] || "unknown";
+      const owner1 = process.env.OWNER_NUMBER_ONE || "Tidak tersedia";
+      const owner2 = process.env.OWNER_NUMBER_TWO || "Tidak tersedia";
 
-Silahkan hubungi owner jika ada keperluan penting!
+      const basicMessage =
+        `*OWNER BOT CONTACT*\n\n` +
+        `Silahkan hubungi owner jika ada keperluan penting!\n\n` +
+        `*Owner 1*\n` +
+        `• Nama: ${process.env.OWNER1_NAME || "Tidak diatur"}\n` +
+        `• WA: wa.me/${owner1}\n\n` +
+        `*Owner 2*\n` +
+        `• Nama: ${process.env.OWNER2_NAME || "Tidak diatur"}\n` +
+        `• WA: wa.me/${owner2}\n\n` +
+        `_Note: Mohon chat owner jika ada keperluan penting saja_`;
 
-*Owner 1* 
-• Nama: ${process.env.OWNER1_NAME}
-• WA: wa.me/${owner1}
-
-*Owner 2*
-• Nama: ${process.env.OWNER2_NAME}
-• WA: wa.me/${owner2}
-
-_Note: Mohon chat owner jika ada keperluan penting saja_`;
-
-      // Kirim pesan menggunakan sendMessage
-      await Oblixn.sock.sendMessage(msg.from, {
-        text: basicMessage,
-      });
+      await msg.sock.sendMessage(
+        msg.chat,
+        { text: basicMessage },
+        { quoted: msg }
+      );
     } catch (error) {
       botLogger.error("Error in ownerinfo command:", {
         name: error.name,
         message: error.message,
         stack: error.stack,
       });
-
-      // Kirim pesan error yang aman
-      if (msg && msg.from) {
-        await Oblixn.sock.sendMessage(msg.from, {
-          text: "❌ Terjadi kesalahan pada sistem",
-        });
-      }
+      await msg.reply("❌ Terjadi kesalahan pada sistem");
     }
   },
 });
-// Command restart bot
-Oblixn.cmd({
+
+// Command: restart
+global.Oblixn.cmd({
   name: "restart",
   desc: "Restart bot",
-  category: "ownerCommand",
+  category: "ownercommand",
   async exec(msg) {
-    if (!Oblixn.isOwner(msg.sender)) {
-      return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
     await msg.reply("🔄 Memulai ulang bot...");
-    process.exit(1); // PM2 akan otomatis restart process
+    process.exit(1); // PM2 atau proses manager akan merestart bot
   },
 });
 
-// Command shutdown bot
-Oblixn.cmd({
+// Command: shutdown
+global.Oblixn.cmd({
   name: "shutdown",
   desc: "Matikan bot",
-  category: "ownerCommand",
+  category: "ownercommand",
   async exec(msg) {
-    if (!Oblixn.isOwner(msg.sender)) {
-      return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
     await msg.reply("⚠️ Mematikan bot...");
-    process.exit(0);
+    process.exit(0); // Keluar tanpa restart
   },
 });
-
-// Command broadcast
-Oblixn.cmd({
+global.Oblixn.cmd({
   name: "broadcast",
   alias: ["bc"],
-  desc: "Broadcast pesan ke semua chat",
-  category: "ownerCommand",
+  desc: "Broadcast pesan ke semua grup",
+  category: "ownercommand",
   async exec(msg, { args }) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
+    if (!msg.sock) {
+      botLogger.error("Socket tidak tersedia pada msg di broadcast");
+      return await msg.reply("❌ Socket tidak tersedia");
+    }
+
+    if (
+      !args.length &&
+      !msg.message.imageMessage &&
+      !msg.message.extendedTextMessage?.contextInfo?.quotedMessage
+    ) {
+      return await msg.reply(
+        `*Cara Penggunaan Broadcast:*\n` +
+          `1️⃣ Teks: !bc [teks]\n` +
+          `2️⃣ Reply Gambar: Reply gambar + !bc [caption]\n` +
+          `3️⃣ Kirim Gambar: Kirim gambar + !bc [caption]\n` +
+          `4️⃣ URL Gambar: !bc image [URL] [caption]`
+      );
+    }
+
     try {
-      const sender = msg.key.participant || msg.from; // Nomor pengirim
-      const senderNumber = sender.split("@")[0]; // Mendapatkan nomor pengirim tanpa domain
-      const mentionJid = `${senderNumber}@s.whatsapp.net`; // Membuat JID pengirim
-      // Cek apakah pengirim adalah owner
-      if (!Oblixn.isOwner(msg.sender)) {
-        return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-      }
-
-      // Cek pesan yang akan di broadcast
+      const senderNumber = normalizeJid(msg.sender);
+      const mentionJid = `${senderNumber}@s.whatsapp.net`;
       const message = args.join(" ");
-      if (!message && !msg.message.imageMessage) {
-        return msg.reply(`❌ Format salah!
-
-*Cara Penggunaan Broadcast:*
-1️⃣ Broadcast Teks:
-!bc [teks]
-
-2️⃣ Broadcast dengan Reply Gambar:
-• Reply gambar + ketik:
-!bc [caption]
-
-3️⃣ Broadcast dengan Kirim Gambar:
-• Kirim gambar + ketik di caption:
-!bc [caption]
-
-4️⃣ Broadcast Gambar dari URL:
-!bc image [URL] [caption]`);
-      }
-
-      // Dapatkan semua chat
-      const chats = await Oblixn.sock.groupFetchAllParticipating();
+      const chats = await msg.sock.groupFetchAllParticipating();
       const chatIds = Object.keys(chats);
 
-      // Kirim notifikasi awal
-      await msg.reply(`🔄 Memulai broadcast ke ${chatIds.length} chat...`);
+      await msg.reply(`🔄 Memulai broadcast ke ${chatIds.length} grup...`);
 
       let successCount = 0;
       let failCount = 0;
 
-      // Cek jenis broadcast
       const isImageUrl = message?.startsWith("image ");
-      const isImageMessage = msg.message.imageMessage;
+      const isImageMessage = !!msg.message.imageMessage;
       const quotedMsg =
         msg.message.extendedTextMessage?.contextInfo?.quotedMessage;
-      const isReplyImage = quotedMsg?.imageMessage;
+      const isReplyImage = !!quotedMsg?.imageMessage;
 
-      // Fungsi untuk broadcast
       async function broadcastMessage(chatId, content) {
         try {
-          await Oblixn.sock.sendMessage(chatId, content);
+          await msg.sock.sendMessage(chatId, content, { quoted: msg });
           successCount++;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // Delay 2 detik
         } catch (error) {
-          failCount++;
-          console.error(`Broadcast error for ${chatId}:`, error);
+          if (error.message === "rate-overlimit") {
+            botLogger.warn(
+              `Rate limit tercapai untuk ${chatId}, mencoba lagi setelah delay...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 5000)); // Tunggu 5 detik
+            await msg.sock.sendMessage(chatId, content, { quoted: msg });
+            successCount++;
+          } else {
+            failCount++;
+            botLogger.error(`Broadcast error for ${chatId}:`, error);
+          }
         }
       }
 
-      // Proses broadcast berdasarkan jenis
       if (isImageMessage) {
-        // Broadcast gambar yang dikirim langsung
-        const media = await Oblixn.sock.downloadMediaMessage(
-          msg.message.imageMessage
-        );
+        const media = await msg.sock.downloadMediaMessage(msg);
         const caption = message || "";
-
         for (const chatId of chatIds) {
           await broadcastMessage(chatId, {
             image: media,
-            caption: `*[BROADCAST MESSAGE DARI @${senderNumber}]*\n\n${caption}`,
+            caption: `*[BROADCAST DARI @${senderNumber}]*\n\n${caption}`,
             mentions: [mentionJid],
           });
         }
       } else if (isImageUrl) {
-        // Broadcast gambar dari URL
-        const [cmd, url, ...caption] = message.split(" ");
+        const [_, url, ...caption] = message.split(" ");
         const captionText = caption.join(" ");
-
         for (const chatId of chatIds) {
           await broadcastMessage(chatId, {
-            image: { url: url },
-            caption: `*[BROADCAST MESSAGE DARI @${senderNumber}]*\n\n${captionText}`,
+            image: { url },
+            caption: `*[BROADCAST DARI @${senderNumber}]*\n\n${captionText}`,
             mentions: [mentionJid],
           });
         }
       } else if (isReplyImage) {
-        // Broadcast gambar yang di-reply
-        const media = await Oblixn.sock.downloadMediaMessage(
-          quotedMsg.imageMessage
-        );
-
+        const media = await msg.sock.downloadMediaMessage({
+          message: quotedMsg,
+        });
         for (const chatId of chatIds) {
           await broadcastMessage(chatId, {
             image: media,
-            caption: `*[BROADCAST MESSAGE DARI @${senderNumber}]*\n\n${message}`,
+            caption: `*[BROADCAST DARI @${senderNumber}]*\n\n${message}`,
             mentions: [mentionJid],
           });
         }
       } else {
-        // Broadcast teks biasa
         for (const chatId of chatIds) {
           await broadcastMessage(chatId, {
-            text: `*[BROADCAST MESSAGE DARI @${senderNumber}]*\n\n${message}`,
+            text: `*[BROADCAST DARI @${senderNumber}]*\n\n${message}`,
             mentions: [mentionJid],
           });
         }
       }
 
-      // Kirim laporan hasil broadcast
       const broadcastType = isImageMessage
-        ? "Gambar (Kirim) + Caption"
+        ? "Gambar (Kirim)"
         : isImageUrl
-        ? "Gambar (URL) + Caption"
+        ? "Gambar (URL)"
         : isReplyImage
-        ? "Gambar (Reply) + Caption"
+        ? "Gambar (Reply)"
         : "Teks";
-
       await msg.reply(
-        `✅ Broadcast selesai!
-
-*Detail Broadcast:*
-📝 Tipe: ${broadcastType}
-✅ Berhasil: ${successCount} chat
-❌ Gagal: ${failCount} chat
-
-_Broadcast selesai dalam ${successCount + failCount} detik_`
+        `✅ Broadcast selesai!\n\n` +
+          `*Detail:*\n` +
+          `📝 Tipe: ${broadcastType}\n` +
+          `✅ Berhasil: ${successCount} grup\n` +
+          `❌ Gagal: ${failCount} grup`
       );
     } catch (error) {
-      console.error("Error in broadcast command:", {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-      });
-
+      botLogger.error("Error in broadcast command:", error);
       await msg.reply("❌ Terjadi kesalahan saat melakukan broadcast");
     }
   },
 });
 
-// Command ban user
-Oblixn.cmd({
+// ... Command lain tetap sama ...
+// Command: ban
+global.Oblixn.cmd({
   name: "ban",
   desc: "Ban user dari menggunakan bot",
-  category: "ownerCommand",
+  category: "ownercommand",
   async exec(msg, { args }) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
+    if (!args[0]) {
+      return await msg.reply(
+        "❌ Gunakan: !ban [nomor] [alasan]\nContoh: !ban 6281234567890 Spamming"
+      );
+    }
+
     try {
-      if (!Oblixn.isOwner(msg.sender)) {
-        return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-      }
-
-      // Dapatkan nomor yang akan diban
-      const number = args[0]?.replace(/[^0-9]/g, "");
-      if (!number) {
-        return msg.reply("❌ Format salah! Gunakan: !ban nomor alasan");
-      }
-
-      // Dapatkan alasan ban
+      const number = args[0].replace(/[^0-9]/g, "");
+      const userId = number.startsWith("0")
+        ? `62${number.slice(1)}@s.whatsapp.net`
+        : `${number}@s.whatsapp.net`;
       const reason = args.slice(1).join(" ") || "Tidak ada alasan";
-      const userId = number.endsWith("@s.whatsapp.net") ? number : `${number}@s.whatsapp.net`;
 
-      const result = await banUser(userId, reason, msg.sender);
-      if (result.success) {
-        await msg.reply(`✅ Berhasil ban user ${number}\nAlasan: ${reason}`);
-      } else {
-        await msg.reply(`❌ Gagal ban user: ${result.message}`);
-      }
+      await banUser(userId, reason, msg.sender);
+      await msg.reply(
+        `✅ Berhasil ban user ${normalizeJid(userId)}\nAlasan: ${reason}`
+      );
     } catch (error) {
-      console.error("Error in ban command:", error);
-      await msg.reply("❌ Terjadi kesalahan saat memproses perintah");
+      botLogger.error("Error in ban command:", error);
+      await msg.reply("❌ Gagal ban user: " + error.message);
     }
   },
 });
 
-// Command unban user
-Oblixn.cmd({
+// Command: unban
+global.Oblixn.cmd({
   name: "unban",
   desc: "Unban user yang dibanned",
-  category: "ownerCommand",
+  category: "ownercommand",
   async exec(msg, { args }) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
+    if (!args[0]) {
+      return await msg.reply(
+        "❌ Gunakan: !unban [nomor]\nContoh: !unban 6281234567890"
+      );
+    }
+
     try {
-      if (!Oblixn.isOwner(msg.sender)) {
-        return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-      }
-
-      // Validasi input
-      if (!args[0]) {
-        return msg.reply("❌ Format salah! Gunakan: !unban nomor");
-      }
-
-      // Normalisasi format nomor
       let number = args[0].replace(/[^0-9]/g, "");
-      
-      // Pastikan format nomor benar
-      if (!number.startsWith("62")) {
-        if (number.startsWith("0")) {
-          number = "62" + number.slice(1);
-        } else if (number.startsWith("8")) {
-          number = "62" + number;
-        }
-      }
+      if (number.startsWith("0")) number = "62" + number.slice(1);
+      else if (!number.startsWith("62")) number = "62" + number;
 
-      console.log('Attempting to unban number:', {
-        originalNumber: args[0],
-        normalizedNumber: number
-      });
+      const userId = `${number}@s.whatsapp.net`;
+      const result = await unbanUser(userId);
 
-      // Proses unban
-      const result = await unbanUser(number);
-
-      if (result.success && result.wasUnbanned) {
-        // Format nomor untuk ditampilkan
-        const displayNumber = number.startsWith("62") ? number : "62" + number;
-        await msg.reply(`✅ Berhasil unban user ${displayNumber}`);
+      if (result) {
+        await msg.reply(`✅ Berhasil unban user ${number}`);
       } else {
-        let errorMessage = result.message;
-        if (result.message.includes("tidak ditemukan")) {
-          errorMessage = `User dengan nomor ${number} tidak ditemukan dalam daftar banned`;
-        }
-        await msg.reply(`❌ Gagal unban user: ${errorMessage}`);
+        await msg.reply(
+          `❌ User ${number} tidak ditemukan dalam daftar banned`
+        );
       }
     } catch (error) {
-      console.error("Error in unban command:", {
-        error: error,
-        args: args
-      });
-      await msg.reply("❌ Terjadi kesalahan saat memproses perintah");
+      botLogger.error("Error in unban command:", error);
+      await msg.reply("❌ Gagal unban user: " + error.message);
     }
   },
 });
 
-// Command listban
-Oblixn.cmd({
+// Command: listban
+global.Oblixn.cmd({
   name: "listban",
   desc: "Menampilkan daftar user yang dibanned",
-  category: "ownerCommand",
+  category: "ownercommand",
   async exec(msg) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
     try {
-      if (!Oblixn.isOwner(msg.sender)) {
-        return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-      }
-
-      const result = await getListBannedUsers();
-      
-      if (!result.success) {
-        return msg.reply(`❌ Gagal mengambil daftar banned: ${result.message}`);
-      }
-
-      if (result.data.length === 0) {
-        return msg.reply("📝 Tidak ada user yang dibanned saat ini");
+      const bannedUsers = await getListBannedUsers();
+      if (!bannedUsers || bannedUsers.length === 0) {
+        return await msg.reply("📝 Tidak ada user yang dibanned saat ini");
       }
 
       let message = "*DAFTAR USER BANNED*\n\n";
-      result.data.forEach((user, index) => {
-        message += `${index + 1}. Nomor: ${user.userId}\n`;
-        message += `   Username: ${user.username}\n`;
-        message += `   Alasan: ${user.reason}\n`;
-        message += `   Dibanned oleh: ${user.bannedBy}\n`;
-        message += `   Tanggal: ${user.banDate}\n\n`;
+      bannedUsers.forEach((user, index) => {
+        message +=
+          `${index + 1}. Nomor: ${normalizeJid(user.user_id)}\n` +
+          `   Alasan: ${user.reason}\n` +
+          `   Dibanned oleh: ${normalizeJid(user.banned_by)}\n` +
+          `   Tanggal: ${new Date(user.banned_at).toLocaleString("id-ID")}\n\n`;
       });
 
       await msg.reply(message);
     } catch (error) {
-      console.error("Error in listban command:", error);
-      await msg.reply("❌ Terjadi kesalahan saat memproses perintah");
+      botLogger.error("Error in listban command:", error);
+      await msg.reply("❌ Gagal mengambil daftar banned: " + error.message);
     }
   },
 });
 
-// Command untuk menampilkan bantuan owner
-Oblixn.cmd({
+// Command: ownerhelp
+global.Oblixn.cmd({
   name: "ownerhelp",
   alias: ["adminhelp"],
   desc: "Menampilkan daftar perintah khusus owner",
-  category: "owner",
+  category: "ownercommand",
   async exec(msg) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
     try {
-      if (!Oblixn.isOwner(msg.sender)) {
-        return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-      }
-
-      // Pastikan config ada
-      if (!config || !config.owner) {
-        console.error("Konfigurasi owner tidak ditemukan");
-        return msg.reply("❌ Terjadi kesalahan konfigurasi");
-      }
-
-      // Daftar command owner
       const ownerCommands = [
         {
           category: "🛠️ Bot Management",
           commands: [
             "!restart - Restart bot",
             "!shutdown - Matikan bot",
-            "!broadcast - Broadcast pesan",
-            "!clearcache - Bersihkan cache",
+            "!broadcast - Broadcast pesan ke semua grup",
             "!boton - Aktifkan bot",
             "!botoff - Nonaktifkan bot",
           ],
@@ -391,99 +345,94 @@ Oblixn.cmd({
         {
           category: "👥 User Management",
           commands: [
-            "!ban - Ban user",
-            "!unban - Unban user",
-            "!listban - List banned users",
+            "!ban [nomor] [alasan] - Ban user",
+            "!unban [nomor] - Unban user",
+            "!listban - Daftar user yang dibanned",
           ],
         },
       ];
 
-      // Buat pesan help
       let helpMessage = `*👑 OWNER COMMANDS 👑*\n\n`;
-
-      // Tambahkan setiap kategori dan commandnya
       ownerCommands.forEach((category) => {
         helpMessage += `*${category.category}:*\n`;
-        category.commands.forEach((cmd) => {
-          helpMessage += `• ${cmd}\n`;
-        });
+        category.commands.forEach((cmd) => (helpMessage += `• ${cmd}\n`));
         helpMessage += "\n";
       });
-
-      // Tambahkan footer
-      helpMessage += `\n_Gunakan command dengan bijak!_`;
+      helpMessage += `_Gunakan command dengan bijak!_`;
 
       await msg.reply(helpMessage);
     } catch (error) {
-      console.error("Error dalam ownerhelp:", error);
+      botLogger.error("Error in ownerhelp command:", error);
       await msg.reply("❌ Terjadi kesalahan saat menampilkan menu owner");
     }
   },
 });
 
-// Command turn on bot
-Oblixn.cmd({
+// Command: boton
+global.Oblixn.cmd({
   name: "boton",
   alias: ["turnon", "hidupkan"],
-  desc: "Menghidupkan bot",
-  category: "ownerCommand",
-  isOwner: true,
+  desc: "Mengaktifkan bot",
+  category: "ownercommand",
   async exec(msg) {
-    // Cek apakah pengirim adalah owner
-    if (!Oblixn.isOwner(msg.sender)) {
-      return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
-    try {
-      // Update status di memory
-      Oblixn.isOffline = false;
 
-      // Update status di bot.json
-      const configPath = path.join(__dirname, "../json/bot.json");
-      const botConfig = JSON.parse(fs.readFileSync(configPath));
+    try {
+      const configPath = path.join(__dirname, "../../json/bot.json");
+      let botConfig = {};
+
+      if (fs.existsSync(configPath)) {
+        botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      } else {
+        botConfig = { bot: { status: true } };
+      }
 
       botConfig.bot.status = true;
-
       fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
+      global.botActive = true;
 
       await msg.reply(
-        "✅ Bot telah diaktifkan\n\n_Bot sekarang dapat digunakan oleh semua user_"
+        "✅ Bot telah diaktifkan\n_Bot sekarang dapat digunakan oleh semua user_"
       );
     } catch (error) {
-      console.error("Boton Error:", error);
+      botLogger.error("Error in boton command:", error);
       await msg.reply("❌ Gagal mengaktifkan bot");
     }
   },
 });
 
-// Command turn off bot
-Oblixn.cmd({
+// Command: botoff
+global.Oblixn.cmd({
   name: "botoff",
   alias: ["turnoff", "matikan"],
   desc: "Menonaktifkan bot",
-  category: "ownerCommand",
-  isOwner: true,
+  category: "ownercommand",
   async exec(msg) {
-    // Cek apakah pengirim adalah owner
-    if (!Oblixn.isOwner(msg.sender)) {
-      return msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
-    try {
-      // Update status di memory
-      Oblixn.isOffline = true;
 
-      // Update status di bot.json
-      const configPath = path.join(__dirname, "../json/bot.json");
-      const botConfig = JSON.parse(fs.readFileSync(configPath));
+    try {
+      const configPath = path.join(__dirname, "../../json/bot.json");
+      let botConfig = {};
+
+      if (fs.existsSync(configPath)) {
+        botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      } else {
+        botConfig = { bot: { status: false } };
+      }
 
       botConfig.bot.status = false;
-
       fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
+      global.botActive = false;
 
       await msg.reply(
-        "✅ Bot telah dinonaktifkan\n\n_Bot hanya akan merespon perintah owner_"
+        "✅ Bot telah dinonaktifkan\n_Bot hanya akan merespon perintah owner_"
       );
     } catch (error) {
-      console.error("Botoff Error:", error);
+      botLogger.error("Error in botoff command:", error);
       await msg.reply("❌ Gagal menonaktifkan bot");
     }
   },

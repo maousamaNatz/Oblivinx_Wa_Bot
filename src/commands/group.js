@@ -486,3 +486,77 @@ global.Oblixn.cmd({
     }
   },
 });
+// src/commands/groupInfo.js (tambahkan di bagian bawah)
+
+// Command: hidetag
+global.Oblixn.cmd({
+  name: "hidetag",
+  alias: ["htag", "hidden"],
+  desc: "Menyebutkan semua anggota grup secara tersembunyi",
+  category: "group",
+  async exec(msg, { args }) {
+    if (!msg.isGroup) return await msg.reply("Perintah ini hanya bisa digunakan di grup!");
+    if (!msg.isBotAdmin) return await msg.reply("Bot harus menjadi admin untuk melakukan ini!");
+    if (!msg.isAdmin) return await msg.reply("Hanya admin yang bisa menggunakan perintah ini!");
+
+    try {
+      if (!msg.sock) {
+        botLogger.error("Socket tidak tersedia pada msg di hidetag");
+        throw new Error("Socket tidak tersedia. Silakan coba lagi nanti.");
+      }
+
+      const metadata = await msg.sock.groupMetadata(msg.chat);
+      const participants = metadata.participants.map(p => p.id);
+
+      const message = args.length ? args.join(" ") : "Pesan tersembunyi untuk semua anggota.";
+      await msg.sock.sendMessage(msg.chat, { text: message, mentions: participants }, { quoted: msg });
+      botLogger.info("Hidetag berhasil dikirim ke grup:", msg.chat);
+    } catch (error) {
+      botLogger.error("Error in hidetag:", error);
+      await msg.reply(`Gagal melakukan hidetag: ${error.message}`);
+    }
+  }
+});
+
+// Command: tagall
+global.Oblixn.cmd({
+  name: "tagall",
+  alias: ["tall", "mentionall"],
+  desc: "Menyebutkan semua anggota grup secara eksplisit (opsional dengan pesan menggunakan -msg)",
+  category: "group",
+  async exec(msg, { args }) {
+    if (!msg.isGroup) return await msg.reply("Perintah ini hanya bisa digunakan di grup!");
+    if (!msg.isBotAdmin) return await msg.reply("Bot harus menjadi admin untuk melakukan ini!");
+    if (!msg.isAdmin) return await msg.reply("Hanya admin yang bisa menggunakan perintah ini!");
+
+    try {
+      if (!msg.sock) {
+        botLogger.error("Socket tidak tersedia pada msg di tagall");
+        throw new Error("Socket tidak tersedia. Silakan coba lagi nanti.");
+      }
+
+      const metadata = await msg.sock.groupMetadata(msg.chat);
+      const participants = metadata.participants;
+
+      // Parsing argumen untuk mendeteksi flag -msg
+      let customMessage = "Daftar anggota grup:";
+      const msgIndex = args.indexOf("-msg");
+      if (msgIndex !== -1 && msgIndex + 1 < args.length) {
+        customMessage = args.slice(msgIndex + 1).join(" ");
+        args.splice(msgIndex); // Hapus -msg dan pesan dari args
+      }
+
+      const mentionList = participants.map((p, i) => {
+        const role = p.admin ? `(${p.admin})` : "";
+        return `${i + 1}. @${normalizeJid(p.id)}${role}`;
+      }).join("\n");
+
+      const finalMessage = `${customMessage}\n\n${mentionList}`;
+      await msg.sock.sendMessage(msg.chat, { text: finalMessage, mentions: participants.map(p => p.id) }, { quoted: msg });
+      botLogger.info("Tagall berhasil dikirim ke grup:", msg.chat);
+    } catch (error) {
+      botLogger.error("Error in tagall:", error);
+      await msg.reply(`Gagal melakukan tagall: ${error.message}`);
+    }
+  }
+});
