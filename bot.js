@@ -62,7 +62,11 @@ async function executeCommand(sock, msg, sender, command, args) {
   try {
     if (global.Oblixn?.commands?.has(command)) {
       const cmd = global.Oblixn.commands.get(command);
-      return await cmd.exec(msg, { args, sock, groupInfo: msg.groupInfo });
+      return await cmd.exec(msg, {
+        args,
+        sock: msg.sock || sock,
+        groupInfo: msg.groupInfo,
+      });
     }
   } catch (error) {
     botLogger.error(`Error menjalankan command ${command}: ${error.message}`);
@@ -203,50 +207,9 @@ const initBot = async () => {
       try {
         if (activeSocket?.ws) {
           activeSocket.ws.close();
-          activeSocket.ev.removeAllListeners(); // Clear old listeners
+          activeSocket.ev.removeAllListeners();
         }
-        const authDir = "auth_info_baileys";
-        if (!fs.existsSync(authDir)) {
-          fs.mkdirSync(authDir, { recursive: true });
-          botLogger.info(`Created auth directory: ${authDir}`);
-        }
-
-        const { state, saveCreds } = await useMultiFileAuthState(authDir).catch(
-          (err) => {
-            throw new Error(`Failed to initialize auth state: ${err.message}`);
-          }
-        );
-
-        const store = makeInMemoryStore({ logger: baileysLogger }); // Menggunakan makeInMemoryStore
-        store.readFromFile("./baileys_store.json");
-        setInterval(() => {
-          store.writeToFile("./baileys_store.json");
-        }, 10000);
-
-        const socketConfig = {
-          auth: state,
-          printQRInTerminal: true,
-          logger: baileysLogger,
-          browser: ["Oblivinx Bot", "Chrome", "1.0.0"],
-          connectTimeoutMs: CONNECTION_TIMEOUT,
-          keepAliveIntervalMs: 30000,
-          retryRequestDelayMs: 5000,
-          cacheGroupMetadata: true,
-          maxIdleTimeMs: 60000,
-          autoReconnect: true,
-          connectionOptions: {
-            timeout: CONNECTION_TIMEOUT,
-            keepAlive: true,
-          },
-        };
-
-        activeSocket = await makeWASocket(socketConfig).catch((err) => {
-          throw new Error(`Failed to create socket: ${err.message}`);
-        });
-
-        socketInstance = activeSocket;
-        setupSocketHandlers(activeSocket, saveCreds);
-        isReconnecting = false;
+        await initBot(); // Rekursif memanggil initBot
       } catch (error) {
         botLogger.error("Gagal melakukan reconnect:", error);
         isReconnecting = false;
@@ -294,6 +257,11 @@ const initBot = async () => {
             const msg = m.messages[0];
             const effectiveSock = sock || activeSocket;
 
+            if (!effectiveSock) {
+              botLogger.error("No valid socket available in messagesUpsert");
+              return;
+            }
+
             const sender = msg.key.remoteJid;
             const isGroup = sender.endsWith("@g.us");
             const participant =
@@ -309,6 +277,7 @@ const initBot = async () => {
               msg.message?.extendedTextMessage?.contextInfo?.protocolMessage
                 ?.conversation ||
               "";
+
             let groupInfo = null;
             if (isGroup) {
               groupInfo = await getGroupAdminInfo(effectiveSock, sender);
@@ -316,13 +285,15 @@ const initBot = async () => {
                 `Group Info - isBotAdmin: ${groupInfo.isBotAdmin}`
               );
             }
+
             const enhancedMsg = {
               ...msg,
+              sock: effectiveSock, // Pastikan sock selalu disertakan
               chat: sender,
               from: sender,
               sender: participant,
-              isGroup: isGroup,
-              groupInfo: groupInfo,
+              isGroup,
+              groupInfo,
               isAdmin: isGroup
                 ? groupInfo?.adminList.some(
                     (admin) =>
@@ -332,7 +303,7 @@ const initBot = async () => {
               isBotAdmin: isGroup ? groupInfo?.isBotAdmin : false,
               botNumber: effectiveSock.user?.id || "unknown",
               pushName: msg.pushName,
-              messageText: messageText,
+              messageText,
               groupMetadata: isGroup
                 ? await effectiveSock.groupMetadata(sender)
                 : null,
@@ -360,6 +331,11 @@ const initBot = async () => {
                 }
               },
             };
+
+            botLogger.info(
+              "Enhanced Msg - sock available:",
+              !!enhancedMsg.sock
+            );
 
             if (isGroup) {
               if (messageText.startsWith(PREFIX)) {
@@ -530,41 +506,18 @@ const initBot = async () => {
 
     global.db = {
       ...global.db,
-      banUser: async (userId, reason, bannedBy, banType = BAN_TYPES.MANUAL) => {
-        try {
-          const cleanUserId = userId.split("@")[0];
-          const [result] = await pool.execute(
-            `INSERT INTO banned_users (user_id, reason, banned_by, ban_type) 
-              VALUES (?, ?, ?, ?)
-              ON DUPLICATE KEY UPDATE 
-              reason = VALUES(reason),
-              banned_by = VALUES(banned_by),
-              ban_type = VALUES(ban_type),
-              banned_at = CURRENT_TIMESTAMP`,
-            [cleanUserId, reason, bannedBy, banType]
-          );
-          return result;
-        } catch (error) {
-          botLogger.error(`Error in banUser: ${error.message}`, {
-            userId,
-            reason,
-            bannedBy,
-            banType,
-          });
-          throw error;
-        }
-      },
+      banUser,
       unbanUser,
       blockUser: async (userId, reason, blockedBy) => {
         try {
-          const cleanUserId = userId.split("@")[0];
+          const cleanUserId = normalizeJid(userId);
           const [result] = await pool.execute(
             `INSERT INTO blocked_users (user_id, reason, blocked_by) 
-              VALUES (?, ?, ?)
-              ON DUPLICATE KEY UPDATE 
-              reason = VALUES(reason),
-              blocked_by = VALUES(blocked_by),
-              blocked_at = CURRENT_TIMESTAMP`,
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE 
+             reason = VALUES(reason),
+             blocked_by = VALUES(blocked_by),
+             blocked_at = CURRENT_TIMESTAMP`,
             [cleanUserId, reason, blockedBy]
           );
           return result;
@@ -579,13 +532,13 @@ const initBot = async () => {
       },
       unblockUser: async (userId, unblockBy) => {
         try {
-          const cleanUserId = userId.split("@")[0];
+          const cleanUserId = normalizeJid(userId);
           const [result] = await pool.execute(
             `UPDATE blocked_users SET 
-              is_blocked = 0, 
-              unblocked_by = ?, 
-              unblocked_at = CURRENT_TIMESTAMP
-              WHERE user_id = ? AND is_blocked = 1`,
+             is_blocked = 0, 
+             unblocked_by = ?, 
+             unblocked_at = CURRENT_TIMESTAMP
+             WHERE user_id = ? AND is_blocked = 1`,
             [unblockBy, cleanUserId]
           );
           return result.affectedRows > 0;
@@ -599,7 +552,7 @@ const initBot = async () => {
       },
       isBlocked: async (userId) => {
         try {
-          const cleanUserId = userId.split("@")[0];
+          const cleanUserId = normalizeJid(userId);
           const [rows] = await pool.execute(
             `SELECT * FROM blocked_users WHERE user_id = ? AND is_blocked = 1`,
             [cleanUserId]
