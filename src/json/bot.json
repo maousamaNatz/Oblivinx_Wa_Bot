@@ -5,12 +5,25 @@
     "prefix": "!",
     "status": true,
     "version": "1.0.0",
-    "owner": ["628123456789", "6281234567890"],
+    "owner": [
+      "628123456789",
+      "6281234567890"
+    ],
     "startTime": "2024-02-25T00:00:00Z",
     "description": "WhatsApp bot dengan berbagai fitur menarik",
     "commands": {
       "total": 50,
-      "categories": ["general", "utility", "fun", "ai", "admin", "owner", "group", "download", "search"]
+      "categories": [
+        "general",
+        "utility",
+        "fun",
+        "ai",
+        "admin",
+        "owner",
+        "group",
+        "download",
+        "search"
+      ]
     },
     "maintenance": false,
     "serverConfig": {

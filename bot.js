@@ -58,18 +58,53 @@ function registerCommand(cmdConfig, handler) {
   commands.push({ config: cmdConfig, handler });
 }
 
+// Di dalam bot.js
+// Di dalam bot.js
 async function executeCommand(sock, msg, sender, command, args) {
   try {
-    if (global.Oblixn?.commands?.has(command)) {
-      const cmd = global.Oblixn.commands.get(command);
-      return await cmd.exec(msg, {
-        args,
-        sock: msg.sock || sock,
-        groupInfo: msg.groupInfo,
-      });
+    if (!global.Oblixn?.commands?.has(command)) {
+      botLogger.warn(`Command ${command} tidak ditemukan.`);
+      await msg.reply(`Perintah ${command} tidak dikenali!`);
+      return;
     }
+
+    const cmd = global.Oblixn.commands.get(command);
+    if (!cmd || !cmd.config) {
+      botLogger.error(
+        `Command ${command} tidak memiliki config yang valid.`,
+        cmd
+      );
+      await msg.reply("Terjadi kesalahan internal saat memproses perintah.");
+      return;
+    }
+
+    const isOwnerCommand =
+      cmd.config.category === "owner" || cmd.config.category === "ownercommand";
+
+    // Jika bot off, hanya owner yang bisa menjalankan command
+    if (global.botActive === false && !global.Oblixn.isOwner(msg.sender)) {
+      await msg.reply(
+        "Bot sedang offline. Hanya owner yang dapat mengakses perintah saat ini."
+      );
+      return;
+    }
+
+    // Jika command khusus owner, batasi akses
+    if (isOwnerCommand && !global.Oblixn.isOwner(msg.sender)) {
+      await msg.reply("Perintah ini hanya untuk owner bot!");
+      return;
+    }
+
+    return await cmd.exec(msg, {
+      args,
+      sock: msg.sock || sock,
+      groupInfo: msg.groupInfo,
+    });
   } catch (error) {
-    botLogger.error(`Error menjalankan command ${command}: ${error.message}`);
+    botLogger.error(
+      `Error menjalankan command ${command}: ${error.message}`,
+      error.stack
+    );
     await msg.reply(`Terjadi kesalahan: ${error.message}`);
   }
 }
@@ -116,6 +151,7 @@ global.Oblixn = {
         'Command harus memiliki "name" dan "exec" sebagai function.'
       );
     }
+
     const wrappedExec = async (msg, params) => {
       try {
         if (category !== "owner" && category !== "ownercommand") {
@@ -143,32 +179,62 @@ global.Oblixn = {
         await msg.reply("Terjadi kesalahan saat menjalankan perintah.");
       }
     };
-    const patterns = [name, ...alias].map(
-      (cmd) => `^${escapeRegex(cmd)}(?:\\s+(.*))?$`
-    );
-    registerCommand(
-      {
-        pattern: patterns[0],
-        secondPattern: patterns.slice(1),
-        fromMe: false,
-        desc,
-        use: category,
-      },
-      wrappedExec
-    );
-    this.commands.set(name, { ...options, exec: wrappedExec });
+
+    // Definisikan config dengan benar
+    const cmdConfig = {
+      pattern: `^${escapeRegex(name)}(?:\\s+(.*))?$`,
+      secondPattern: alias.map((cmd) => `^${escapeRegex(cmd)}(?:\\s+(.*))?$`),
+      fromMe: false,
+      desc,
+      category,
+      use: category,
+    };
+
+    // Daftarkan ke commands Map
+    this.commands.set(name, { config: cmdConfig, exec: wrappedExec });
+    botLogger.info(`Command ${name} registered with config:`, cmdConfig);
+
+    // Daftarkan alias sebagai referensi ke command utama
+    alias.forEach((alt) => {
+      this.commands.set(alt, { config: cmdConfig, exec: wrappedExec });
+      botLogger.info(`Alias ${alt} registered for ${name}`);
+    });
   },
   isOwner: function (sender) {
-    const senderNumber = sender.split("@")[0];
+    if (!sender) {
+      botLogger.error("Sender tidak didefinisikan dalam pengecekan owner.");
+      return false;
+    }
+    const senderNumber = sender.split("@")[0]; // Ambil nomor tanpa domain
     const ownerNumbers = [
-      ...process.env.OWNER_NUMBER_ONE.split(","),
-      ...(process.env.OWNER_NUMBER_TWO?.split(",") || []),
-    ];
-    const normalizedSender = senderNumber.startsWith("62")
-      ? "0" + senderNumber.slice(2)
+      ...process.env.OWNER_NUMBER_ONE.split(",").map((num) => num.trim()),
+      ...(process.env.OWNER_NUMBER_TWO?.split(",").map((num) => num.trim()) ||
+        []),
+    ].map((num) => {
+      // Normalisasi nomor owner agar konsisten
+      return num.startsWith("+62")
+        ? num.replace("+62", "62")
+        : num.startsWith("08")
+        ? "62" + num.slice(1)
+        : num;
+    });
+
+    const normalizedSender = senderNumber.startsWith("08")
+      ? "62" + senderNumber.slice(1)
+      : senderNumber.startsWith("+62")
+      ? senderNumber.replace("+62", "62")
       : senderNumber;
-    botLogger.info(`Checking owner: ${normalizedSender}`);
-    return ownerNumbers.includes(normalizedSender);
+
+    botLogger.info(
+      `Checking owner: ${normalizedSender} against ${ownerNumbers}`
+    );
+    const isOwner = ownerNumbers.includes(normalizedSender);
+    if (!isOwner) {
+      botLogger.warn(
+        `Sender ${normalizedSender} bukan owner. Owner list: ${ownerNumbers}`
+      );
+    }
+    return isOwner;
   },
 };
 

@@ -7,18 +7,21 @@ const {
   checkBanStatus,
   getListBannedUsers,
 } = require("../../config/dbConf/database");
-const { normalizeJid } = require("../handler/permission"); // Impor normalizeJid
+const { normalizeJid } = require("../handler/permission");
 const fs = require("fs");
 const path = require("path");
 
-// ... Command la
 // Command: ownerinfo
 global.Oblixn.cmd({
   name: "ownerinfo",
   alias: ["owner"],
   desc: "Menampilkan informasi owner bot",
-  category: "info",
+  category: "ownercommand", // Diubah ke ownercommand
   async exec(msg) {
+    if (!global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
+    }
+
     try {
       if (!msg.sock) {
         botLogger.error("Socket tidak tersedia pada msg di ownerinfo");
@@ -66,8 +69,14 @@ global.Oblixn.cmd({
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
-    await msg.reply("🔄 Memulai ulang bot...");
-    process.exit(1); // PM2 atau proses manager akan merestart bot
+    try {
+      await msg.reply("🔄 Memulai ulang bot...");
+      botLogger.info("Bot sedang direstart oleh owner");
+      process.exit(1); // PM2 atau proses manager akan merestart bot
+    } catch (error) {
+      botLogger.error("Error in restart command:", error);
+      await msg.reply("❌ Gagal merestart bot");
+    }
   },
 });
 
@@ -81,10 +90,18 @@ global.Oblixn.cmd({
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
-    await msg.reply("⚠️ Mematikan bot...");
-    process.exit(0); // Keluar tanpa restart
+    try {
+      await msg.reply("⚠️ Mematikan bot...");
+      botLogger.info("Bot dimatikan oleh owner");
+      process.exit(0); // Keluar tanpa restart
+    } catch (error) {
+      botLogger.error("Error in shutdown command:", error);
+      await msg.reply("❌ Gagal mematikan bot");
+    }
   },
 });
+
+// Command: broadcast
 global.Oblixn.cmd({
   name: "broadcast",
   alias: ["bc"],
@@ -140,7 +157,7 @@ global.Oblixn.cmd({
         } catch (error) {
           if (error.message === "rate-overlimit") {
             botLogger.warn(
-              `Rate limit tercapai untuk ${chatId}, mencoba lagi setelah delay...`
+              `Rate limit tercapai untuk ${chatId}, mencoba lagi...`
             );
             await new Promise((resolve) => setTimeout(resolve, 5000)); // Tunggu 5 detik
             await msg.sock.sendMessage(chatId, content, { quoted: msg });
@@ -213,7 +230,6 @@ global.Oblixn.cmd({
   },
 });
 
-// ... Command lain tetap sama ...
 // Command: ban
 global.Oblixn.cmd({
   name: "ban",
@@ -338,8 +354,8 @@ global.Oblixn.cmd({
             "!restart - Restart bot",
             "!shutdown - Matikan bot",
             "!broadcast - Broadcast pesan ke semua grup",
-            "!boton - Aktifkan bot",
-            "!botoff - Nonaktifkan bot",
+            "!bot on - Aktifkan bot", // Konsolidasi dengan bot
+            "!bot off - Nonaktifkan bot",
           ],
         },
         {
@@ -349,6 +365,10 @@ global.Oblixn.cmd({
             "!unban [nomor] - Unban user",
             "!listban - Daftar user yang dibanned",
           ],
+        },
+        {
+          category: "ℹ️ Info",
+          commands: ["!ownerinfo - Informasi kontak owner"],
         },
       ];
 
@@ -368,72 +388,69 @@ global.Oblixn.cmd({
   },
 });
 
-// Command: boton
+// Command: bot (menggantikan boton dan botoff)
 global.Oblixn.cmd({
-  name: "boton",
-  alias: ["turnon", "hidupkan"],
-  desc: "Mengaktifkan bot",
+  name: "bot",
+  alias: ["togglebot"],
+  desc: "Mengaktifkan atau menonaktifkan bot",
   category: "ownercommand",
-  async exec(msg) {
+  async exec(msg, { args }) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
     try {
-      const configPath = path.join(__dirname, "../../json/bot.json");
+      const action = args[0]?.toLowerCase();
+      const configPath = path.join(__dirname, "../json/bot.json");
       let botConfig = {};
 
       if (fs.existsSync(configPath)) {
         botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
       } else {
-        botConfig = { bot: { status: true } };
+        botConfig = { bot: { status: global.botActive } };
       }
 
-      botConfig.bot.status = true;
-      fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
-      global.botActive = true;
-
-      await msg.reply(
-        "✅ Bot telah diaktifkan\n_Bot sekarang dapat digunakan oleh semua user_"
-      );
-    } catch (error) {
-      botLogger.error("Error in boton command:", error);
-      await msg.reply("❌ Gagal mengaktifkan bot");
-    }
-  },
-});
-
-// Command: botoff
-global.Oblixn.cmd({
-  name: "botoff",
-  alias: ["turnoff", "matikan"],
-  desc: "Menonaktifkan bot",
-  category: "ownercommand",
-  async exec(msg) {
-    if (!global.Oblixn.isOwner(msg.sender)) {
-      return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
-    }
-
-    try {
-      const configPath = path.join(__dirname, "../../json/bot.json");
-      let botConfig = {};
-
-      if (fs.existsSync(configPath)) {
-        botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (action === "on") {
+        botConfig.bot.status = true;
+        global.botActive = true;
+        fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
+        await msg.reply(
+          "✅ Bot telah diaktifkan\n_Bot sekarang dapat digunakan oleh semua user_"
+        );
+      } else if (action === "off") {
+        botConfig.bot.status = false;
+        global.botActive = false;
+        fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
+        await msg.reply(
+          "✅ Bot telah dinonaktifkan\n_Bot hanya akan merespon perintah owner_"
+        );
       } else {
-        botConfig = { bot: { status: false } };
+        await msg.reply(
+          `Status bot saat ini: ${
+            global.botActive ? "On" : "Off"
+          }\nGunakan !bot on/off untuk mengubah`
+        );
       }
-
-      botConfig.bot.status = false;
-      fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
-      global.botActive = false;
-
-      await msg.reply(
-        "✅ Bot telah dinonaktifkan\n_Bot hanya akan merespon perintah owner_"
-      );
     } catch (error) {
-      botLogger.error("Error in botoff command:", error);
-      await msg.reply("❌ Gagal menonaktifkan bot");
+      botLogger.error("Error in bot command:", error);
+      await msg.reply("❌ Gagal mengubah status bot: " + error.message);
     }
   },
 });
+
+// Inisialisasi status bot saat startup (tambahkan di initBot atau bagian awal bot.js)
+async function loadBotStatus() {
+  const configPath = path.join(__dirname, "../json/bot.json");
+  if (fs.existsSync(configPath)) {
+    const botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    global.botActive = botConfig.bot?.status ?? true; // Default true jika tidak ada
+  } else {
+    global.botActive = true; // Default aktif jika file tidak ada
+  }
+  botLogger.info(`Bot status loaded: ${global.botActive ? "On" : "Off"}`);
+}
+
+// Panggil fungsi ini di initBot
+const initBot = async () => {
+  await loadBotStatus();
+};
