@@ -5,7 +5,7 @@ const path = require('path');
 require('dotenv').config();
 
 // Variabel untuk menyimpan status debug
-let isDebugEnabled = process.env.DEBUG_MODE === 'true';
+let isDebugEnabled = process.env.DEBUG_MODE === 'false';
 
 // Level log yang lebih sederhana
 const logLevels = {

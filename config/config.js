@@ -437,6 +437,9 @@ const RECONNECT_INTERVAL = process.env.RECONNECT_INTERVAL ? parseInt(process.env
 const MAX_RECONNECT_RETRIES = process.env.MAX_RECONNECT_RETRIES ? parseInt(process.env.MAX_RECONNECT_RETRIES) : 5;
 const CONNECTION_TIMEOUT = process.env.CONNECTION_TIMEOUT ? parseInt(process.env.CONNECTION_TIMEOUT) : 60000; // 60 detik default
 
+// Buat cache grup manual
+const groupCache = new Map();
+
 module.exports = {
   config,
   store,
@@ -457,9 +460,5 @@ module.exports = {
   RECONNECT_INTERVAL,
   MAX_RECONNECT_RETRIES,
   CONNECTION_TIMEOUT,
-  groupCache: {
-    get: async (jid) => {
-      return store.loadGroupMetadata(jid);
-    }
-  },
+  groupCache,
 };

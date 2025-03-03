@@ -1,8 +1,23 @@
 
 {
-  "greeting": "Selamat datang di chatbot!",
-  "help": "Untuk bantuan, ketik !help",
-  "add_member_success": "Berhasil menambahkan anggota ke grup.",
-  "add_member_failure": "Gagal menambahkan anggota. Pastikan nomor valid dan bot adalah admin.",
-  "invalid_format": "Format salah. Gunakan: !add nomor1,nomor2,..."
+  "logs": {
+    "error":{
+      "error1": "Command harus memiliki pattern dan handler",
+      "error2": "Terjadi kesalahan pada sistem",
+      "error3": "Terjadi kesalahan pada sistem",
+      "error4": "Terjadi kesalahan pada sistem"
+    },
+    "warn": {
+      "title": "Warning",
+      "description": "Terjadi peringatan pada sistem"
+    },
+    "info": {
+      "runCommand": "Menjalankan command: ${command} dengan args: ${args.join(``)}",
+      "description": "Informasi pada sistem"
+    },
+    "debug": {
+      "title": "Debug",
+      "description": "Debugging pada sistem"
+    } 
+  }
 }
