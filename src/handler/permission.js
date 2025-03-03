@@ -1,4 +1,4 @@
-const { botLogger } = require('../utils/logger');
+const { botLogger } = require("../utils/logger");
 let sock = null;
 
 /**
@@ -9,49 +9,52 @@ let sock = null;
  * @returns {Promise<boolean>} - true jika pengguna adalah admin
  */
 async function isAdmin(groupId, userId, verbose = false) {
-    try {
-        if (!sock) {
-            botLogger.error('Socket belum diinisialisasi');
-            return false;
-        }
-
-        // Dapatkan metadata grup
-        const metadata = await sock.groupMetadata(groupId);
-        
-        if (!metadata) {
-            botLogger.error('Metadata grup tidak ditemukan');
-            return false;
-        }
-
-        if (verbose) {
-            botLogger.info('Informasi Grup:', {
-                groupId,
-                userId,
-                jumlahPeserta: metadata.participants.length
-            });
-        }
-
-        // Normalisasi ID pengguna
-        const normalizedUserId = userId.toLowerCase().replace(/[^0-9]/g, '');
-        
-        // Cari peserta dengan perbandingan ID yang dinormalisasi
-        const participant = metadata.participants.find(p => {
-            const participantId = p.id.toLowerCase().replace(/[^0-9]/g, '');
-            return participantId === normalizedUserId;
-        });
-
-        if (verbose) {
-            botLogger.info('Peserta ditemukan:', {
-                ditemukan: !!participant,
-                admin: participant?.admin
-            });
-        }
-
-        return participant && (participant.admin === 'admin' || participant.admin === 'superadmin');
-    } catch (error) {
-        botLogger.error('Pesan atau properti chat tidak valid:', error);
-        return false;
+  try {
+    if (!sock) {
+      botLogger.error("Socket belum diinisialisasi");
+      return false;
     }
+
+    // Dapatkan metadata grup
+    const metadata = await sock.groupMetadata(groupId);
+
+    if (!metadata) {
+      botLogger.error("Metadata grup tidak ditemukan");
+      return false;
+    }
+
+    if (verbose) {
+      botLogger.info("Informasi Grup:", {
+        groupId,
+        userId,
+        jumlahPeserta: metadata.participants.length,
+      });
+    }
+
+    // Normalisasi ID pengguna
+    const normalizedUserId = userId.toLowerCase().replace(/[^0-9]/g, "");
+
+    // Cari peserta dengan perbandingan ID yang dinormalisasi
+    const participant = metadata.participants.find((p) => {
+      const participantId = p.id.toLowerCase().replace(/[^0-9]/g, "");
+      return participantId === normalizedUserId;
+    });
+
+    if (verbose) {
+      botLogger.info("Peserta ditemukan:", {
+        ditemukan: !!participant,
+        admin: participant?.admin,
+      });
+    }
+
+    return (
+      participant &&
+      (participant.admin === "admin" || participant.admin === "superadmin")
+    );
+  } catch (error) {
+    botLogger.error("Pesan atau properti chat tidak valid:", error);
+    return false;
+  }
 }
 
 /**
@@ -60,41 +63,44 @@ async function isAdmin(groupId, userId, verbose = false) {
  * @returns {Promise<boolean>} - true jika bot adalah admin
  */
 async function isBotAdmin(groupId) {
-    try {
-        if (!sock) {
-            botLogger.error('Socket belum diinisialisasi');
-            return false;
-        }
-
-        // Dapatkan ID bot
-        const botId = sock.user.id.split(':')[0] + '@s.whatsapp.net';
-        
-        // Dapatkan metadata grup
-        const metadata = await sock.groupMetadata(groupId);
-        
-        if (!metadata) {
-            botLogger.error('Metadata grup tidak ditemukan');
-            return false;
-        }
-
-        // Cari bot dalam daftar peserta
-        const botParticipant = metadata.participants.find(p => 
-            p.id.toLowerCase() === botId.toLowerCase()
-        );
-
-        const isAdmin = botParticipant && (botParticipant.admin === 'admin' || botParticipant.admin === 'superadmin');
-        
-        botLogger.info('Status admin bot:', {
-            groupId,
-            botId,
-            isAdmin
-        });
-
-        return isAdmin;
-    } catch (error) {
-        botLogger.error('Pesan atau properti chat tidak valid:', error);
-        return false;
+  try {
+    if (!sock) {
+      botLogger.error("Socket belum diinisialisasi");
+      return false;
     }
+
+    // Dapatkan ID bot
+    const botId = sock.user.id.split(":")[0] + "@s.whatsapp.net";
+
+    // Dapatkan metadata grup
+    const metadata = await sock.groupMetadata(groupId);
+
+    if (!metadata) {
+      botLogger.error("Metadata grup tidak ditemukan");
+      return false;
+    }
+
+    // Cari bot dalam daftar peserta
+    const botParticipant = metadata.participants.find(
+      (p) => p.id.toLowerCase() === botId.toLowerCase()
+    );
+
+    const isAdmin =
+      botParticipant &&
+      (botParticipant.admin === "admin" ||
+        botParticipant.admin === "superadmin");
+
+    botLogger.info("Status admin bot:", {
+      groupId,
+      botId,
+      isAdmin,
+    });
+
+    return isAdmin;
+  } catch (error) {
+    botLogger.error("Pesan atau properti chat tidak valid:", error);
+    return false;
+  }
 }
 
 /**
@@ -104,80 +110,92 @@ async function isBotAdmin(groupId) {
  * @returns {Promise<{isUserAdmin: boolean, isBotAdmin: boolean}>}
  */
 async function checkAdminStatus(groupId, userId) {
-    try {
-        const [userAdmin, botAdmin] = await Promise.all([
-            isAdmin(groupId, userId),
-            isBotAdmin(groupId)
-        ]);
+  try {
+    const [userAdmin, botAdmin] = await Promise.all([
+      isAdmin(groupId, userId),
+      isBotAdmin(groupId),
+    ]);
 
-        return {
-            isUserAdmin: userAdmin,
-            isBotAdmin: botAdmin
-        };
-    } catch (error) {
-        botLogger.error('Pesan atau properti chat tidak valid:', error);
-        return {
-            isUserAdmin: false,
-            isBotAdmin: false
-        };
-    }
+    return {
+      isUserAdmin: userAdmin,
+      isBotAdmin: botAdmin,
+    };
+  } catch (error) {
+    botLogger.error("Pesan atau properti chat tidak valid:", error);
+    return {
+      isUserAdmin: false,
+      isBotAdmin: false,
+    };
+  }
 }
 
 // Fungsi untuk mengatur instance sock
 function setup(sockInstance) {
-    sock = sockInstance;
-    botLogger.info('Pengaturan handler izin selesai');
-}
-
-function registerCommand(config) {
-    botLogger.info(`Mendaftarkan perintah: ${config.name}`);
+  sock = sockInstance;
+  botLogger.info("Pengaturan handler izin selesai");
 }
 
 async function checkStalkUsage(userId) {
-    // Fungsi stub: izinkan semua penggunaan
-    return true;
+  // Fungsi stub: izinkan semua penggunaan
+  return true;
 }
 
 async function checkAIUsage(userId) {
-    // Fungsi stub: izinkan semua penggunaan
-    return true;
+  // Fungsi stub: izinkan semua penggunaan
+  return true;
 }
 
-// Tambahkan di config/config.js atau buat file baru src/utils/groupUtils.js
+const normalizeJid = (jid) => {
+  if (!jid) return "";
+  const normalized = jid.split(":")[0].split("@")[0]; // Ambil hanya nomor telepon
+  botLogger.info(`Normalizing JID: ${jid} -> ${normalized}`);
+  return normalized;
+};
+
 const getGroupAdminInfo = async (sock, groupId) => {
-    try {
-      const metadata = await sock.groupMetadata(groupId);
-      const participants = metadata.participants;
-      
-      // Dapatkan daftar admin
-      const admins = participants.filter(p => p.admin === 'admin' || p.admin === 'superadmin');
-      
-      // Cek apakah bot adalah admin
-      const botId = sock.user.id;
-      const isBotAdmin = admins.some(admin => admin.id === botId);
-      
-      return {
-        totalAdmins: admins.length,
-        adminList: admins,
-        isBotAdmin,
-        totalParticipants: participants.length
-      };
-    } catch (error) {
-      botLogger.error(`Error getting group admin info: ${error.message}`);
-      throw error;
-    }
+  try {
+    const metadata = await sock.groupMetadata(groupId);
+    const participants = metadata.participants;
+
+    const admins = participants.filter(
+      (p) => p.admin === "admin" || p.admin === "superadmin"
+    );
+    const botId = normalizeJid(sock.user.id);
+
+    botLogger.info(`Bot ID: ${botId}`);
+    botLogger.info(
+      `Admin IDs: ${admins.map((a) => normalizeJid(a.id)).join(", ")}`
+    );
+
+    const isBotAdmin = admins.some((admin) => {
+      const adminId = normalizeJid(admin.id);
+      const match = adminId === botId;
+      botLogger.info(`Comparing: ${adminId} === ${botId} -> ${match}`);
+      return match;
+    });
+
+    return {
+      totalAdmins: admins.length,
+      adminList: admins,
+      isBotAdmin,
+      totalParticipants: participants.length,
+    };
+  } catch (error) {
+    botLogger.error(`Error getting group admin info: ${error.message}`);
+    throw error;
+  }
 };
 
 // Definisikan permissionHandler sebagai sebuah objek yang berisi semua fungsi
 const permissionHandler = {
   isAdmin,
   setup,
-  registerCommand,
   checkStalkUsage,
   checkAIUsage,
   checkAdminStatus,
   isBotAdmin,
   getGroupAdminInfo,
+  normalizeJid,
 };
 
 // Ubah module.exports untuk mendukung impor langsung dan terdestrukturisasi

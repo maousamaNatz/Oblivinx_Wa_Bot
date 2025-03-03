@@ -5,7 +5,7 @@ const {
   makeInMemoryStore, // Mengganti makeInMemo dengan makeInMemoryStore
 } = require("@whiskeysockets/baileys");
 const fs = require("fs");
-const { getGroupAdminInfo } = require("./src/handler/permission");
+const { getGroupAdminInfo, normalizeJid } = require("./src/handler/permission");
 const path = require("path");
 require("dotenv").config();
 const permissionHandler = require("./src/handler/permission");
@@ -293,16 +293,12 @@ const initBot = async () => {
             if (!m.messages || !m.messages[0]) return;
             const msg = m.messages[0];
             const effectiveSock = sock || activeSocket;
-        
+
             const sender = msg.key.remoteJid;
             const isGroup = sender.endsWith("@g.us");
-            const participant = msg.key.participant || msg.participant || sender;
-        
-            let groupInfo = null;
-            if (isGroup) {
-              groupInfo = await getGroupAdminInfo(effectiveSock, sender);
-            }
-        
+            const participant =
+              msg.key.participant || msg.participant || sender;
+
             const messageText =
               msg.message?.conversation ||
               msg.message?.extendedTextMessage?.text ||
@@ -313,38 +309,12 @@ const initBot = async () => {
               msg.message?.extendedTextMessage?.contextInfo?.protocolMessage
                 ?.conversation ||
               "";
-
-            let groupMetadata = null;
-            let isAdmin = false;
-            let isBotAdmin = false;
+            let groupInfo = null;
             if (isGroup) {
-              try {
-                groupMetadata = await effectiveSock.groupMetadata(sender);
-                const senderId = msg.key.participant || sender;
-                isAdmin =
-                  groupMetadata.participants.some(
-                    (p) =>
-                      p.id === senderId &&
-                      ["admin", "superadmin"].includes(p.admin)
-                  ) || false;
-                isBotAdmin =
-                  groupMetadata.participants.some(
-                    (p) =>
-                      p.id === effectiveSock.user.id &&
-                      ["admin", "superadmin"].includes(p.admin)
-                  ) || false;
-                console.log(groupMetadata.participants);
-                console.log(senderId);
-                console.log(effectiveSock.user.id);
-              } catch (error) {
-                botLogger.error(
-                  `Gagal mendapatkan metadata grup: ${error.message}`
-                );
-                await msg.reply(
-                  "Terjadi kesalahan saat mengambil informasi grup."
-                );
-                return;
-              }
+              groupInfo = await getGroupAdminInfo(effectiveSock, sender);
+              botLogger.info(
+                `Group Info - isBotAdmin: ${groupInfo.isBotAdmin}`
+              );
             }
             const enhancedMsg = {
               ...msg,
@@ -353,12 +323,19 @@ const initBot = async () => {
               sender: participant,
               isGroup: isGroup,
               groupInfo: groupInfo,
-              isAdmin: isGroup ? groupInfo?.adminList.some(admin => admin.id === participant) : false,
+              isAdmin: isGroup
+                ? groupInfo?.adminList.some(
+                    (admin) =>
+                      normalizeJid(admin.id) === normalizeJid(participant)
+                  )
+                : false,
               isBotAdmin: isGroup ? groupInfo?.isBotAdmin : false,
               botNumber: effectiveSock.user?.id || "unknown",
               pushName: msg.pushName,
               messageText: messageText,
-              groupMetadata: isGroup ? await effectiveSock.groupMetadata(sender) : null,
+              groupMetadata: isGroup
+                ? await effectiveSock.groupMetadata(sender)
+                : null,
               mentions:
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
                 [],
@@ -384,16 +361,46 @@ const initBot = async () => {
               },
             };
 
+            if (isGroup) {
+              if (messageText.startsWith(PREFIX)) {
+                const parsedCommand = commandHandler(messageText);
+                if (parsedCommand) {
+                  const { command, args } = parsedCommand;
+                  try {
+                    await executeCommand(
+                      effectiveSock,
+                      enhancedMsg,
+                      sender,
+                      command,
+                      args
+                    );
+                  } catch (error) {
+                    botLogger.error(
+                      `Error executing command ${command}: ${error.message}`
+                    );
+                    await enhancedMsg.reply(
+                      "Terjadi kesalahan saat memproses perintah."
+                    );
+                  }
+                  return;
+                }
+              }
+              await handleGroupMessage(effectiveSock, enhancedMsg);
+              return;
+            }
+
             if (messageText.startsWith(PREFIX)) {
               const parsedCommand = commandHandler(messageText);
               if (parsedCommand) {
                 const { command, args } = parsedCommand;
-                await executeCommand(effectiveSock, enhancedMsg, sender, command, args);
+                await executeCommand(
+                  effectiveSock,
+                  enhancedMsg,
+                  sender,
+                  command,
+                  args
+                );
               }
-            }
-        
-            if (isGroup) {
-              await handleGroupMessage(effectiveSock, enhancedMsg);
             }
           } catch (error) {
             botLogger.error("Error processing message:", error);
