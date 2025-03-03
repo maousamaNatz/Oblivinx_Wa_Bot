@@ -109,6 +109,7 @@ async function executeCommand(sock, msg, sender, command, args) {
   }
 }
 
+// Di dalam bot.js
 function loadCommands(commandsPath) {
   try {
     botLogger.info(`Loading commands from ${commandsPath}`);
@@ -122,22 +123,32 @@ function loadCommands(commandsPath) {
       const fullPath = path.join(commandsPath, file);
       if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
         try {
+          delete require.cache[require.resolve(fullPath)]; // Clear cache untuk reload
           require(fullPath);
           loadedCount++;
+          botLogger.info(`Loaded command file: ${file}`);
         } catch (error) {
           botLogger.error(
             `Error loading command file ${file}: ${error.message}`,
-            { file, fullPath }
+            { file, fullPath, stack: error.stack }
           );
         }
       }
     });
     botLogger.info(`${loadedCount} command files loaded successfully`);
+    botLogger.info(
+      "Registered commands:",
+      Array.from(global.Oblixn.commands.entries()).map(([name, cmd]) => ({
+        name,
+        category: cmd.config?.category || "unknown",
+      }))
+    );
   } catch (error) {
-    botLogger.error(`Error loading commands: ${error.message}`);
+    botLogger.error(`Error loading commands: ${error.message}`, {
+      stack: error.stack,
+    });
   }
 }
-
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -148,7 +159,9 @@ global.Oblixn = {
     const { name, alias = [], desc = "", category = "utility", exec } = options;
     if (!name || typeof exec !== "function") {
       throw new Error(
-        'Command harus memiliki "name" dan "exec" sebagai function.'
+        `Command harus memiliki "name" dan "exec" sebagai function: ${JSON.stringify(
+          options
+        )}`
       );
     }
 
@@ -171,8 +184,8 @@ global.Oblixn = {
         }
         return await exec(msg, params);
       } catch (error) {
-        botLogger.error(`Error executing command ${name}:`, error, {
-          command: name,
+        botLogger.error(`Error executing command ${name}: ${error.message}`, {
+          stack: error.stack,
           params,
           msg,
         });
@@ -180,8 +193,8 @@ global.Oblixn = {
       }
     };
 
-    // Definisikan config dengan benar
     const cmdConfig = {
+      name, // Pastikan name disimpan di config
       pattern: `^${escapeRegex(name)}(?:\\s+(.*))?$`,
       secondPattern: alias.map((cmd) => `^${escapeRegex(cmd)}(?:\\s+(.*))?$`),
       fromMe: false,
@@ -190,13 +203,12 @@ global.Oblixn = {
       use: category,
     };
 
-    // Daftarkan ke commands Map
-    this.commands.set(name, { config: cmdConfig, exec: wrappedExec });
+    const commandData = { config: cmdConfig, exec: wrappedExec };
+    this.commands.set(name, commandData);
     botLogger.info(`Command ${name} registered with config:`, cmdConfig);
 
-    // Daftarkan alias sebagai referensi ke command utama
     alias.forEach((alt) => {
-      this.commands.set(alt, { config: cmdConfig, exec: wrappedExec });
+      this.commands.set(alt, commandData); // Alias menggunakan data yang sama
       botLogger.info(`Alias ${alt} registered for ${name}`);
     });
   },
@@ -328,15 +340,19 @@ const initBot = async () => {
               return;
             }
 
-            // Tambahkan pengecekan untuk mengabaikan pesan dari bot sendiri
             if (msg.key.fromMe) {
               botLogger.info("Mengabaikan pesan dari bot sendiri.");
               return;
             }
 
             if (global.botActive === false) {
-              botLogger.info("Bot dalam status nonaktif, pesan diabaikan.");
-              return;
+              if (!global.Oblixn.isOwner(msg.sender)) {
+                botLogger.info(
+                  "Bot dalam status nonaktif, pesan diabaikan (bukan owner)."
+                );
+                return;
+              }
+              botLogger.info("Pesan dari owner diterima meskipun bot off.");
             }
 
             const sender = msg.key.remoteJid;
@@ -355,34 +371,40 @@ const initBot = async () => {
               "";
             let groupInfo = null;
             if (isGroup) {
-              // Gunakan cache jika tersedia
               if (groupCache.has(sender)) {
                 groupInfo = groupCache.get(sender);
-                botLogger.info(
-                  `Menggunakan groupInfo dari cache untuk ${sender}`
-                );
-              } else {
+                if (
+                  !groupInfo ||
+                  !groupInfo.participants ||
+                  !Array.isArray(groupInfo.participants)
+                ) {
+                  botLogger.warn(
+                    `Cache grup ${sender} tidak valid, mengambil ulang...`
+                  );
+                  groupCache.delete(sender);
+                  groupInfo = null;
+                } else {
+                  botLogger.info(
+                    `Menggunakan groupInfo dari cache untuk ${sender}`
+                  );
+                }
+              }
+              if (!groupInfo) {
                 try {
                   groupInfo = await getGroupAdminInfo(effectiveSock, sender);
+
                   groupCache.set(sender, groupInfo);
                 } catch (error) {
-                  if (error.message === "rate-overlimit") {
-                    botLogger.warn(
-                      "Rate limit tercapai, menunda pengambilan metadata..."
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, 5000)); // Tunggu 5 detik
-                    groupInfo = await getGroupAdminInfo(effectiveSock, sender); // Coba lagi
-                    groupCache.set(sender, groupInfo);
-                  } else {
-                    throw error;
-                  }
+                  botLogger.error(
+                    `Error saat mengambil groupInfo: ${error.message}`
+                  );
+                  groupInfo = null;
                 }
               }
               botLogger.info(
-                `Group Info - isBotAdmin: ${groupInfo.isBotAdmin}`
+                `Group Info - isBotAdmin: ${groupInfo?.isBotAdmin || false}`
               );
             }
-
             const enhancedMsg = {
               ...msg,
               sock: effectiveSock,
@@ -438,10 +460,12 @@ const initBot = async () => {
             );
 
             if (isGroup) {
+              // Hanya proses jika pesan adalah perintah atau event grup (selamat datang/perpisahan)
               if (messageText.startsWith(PREFIX)) {
                 const parsedCommand = commandHandler(messageText);
                 if (parsedCommand) {
                   const { command, args } = parsedCommand;
+                  botLogger.info(`Memproses command di grup: ${command}`);
                   try {
                     await executeCommand(
                       effectiveSock,
@@ -460,15 +484,25 @@ const initBot = async () => {
                   }
                   return;
                 }
+              } else if (msg.key.participant && msg.messageStubType) {
+                // Hanya proses event grup (misalnya, peserta bergabung/keluar)
+                botLogger.info(
+                  `Memproses event grup: ${messageText || "event"}`
+                );
+                await handleGroupMessage(effectiveSock, enhancedMsg);
+                return;
+              } else {
+                botLogger.info(`Mengabaikan pesan grup biasa: ${messageText}`);
+                return; // Abaikan pesan biasa tanpa PREFIX
               }
-              await handleGroupMessage(effectiveSock, enhancedMsg);
-              return;
             }
 
+            // Proses pesan pribadi hanya jika diawali PREFIX
             if (messageText.startsWith(PREFIX)) {
               const parsedCommand = commandHandler(messageText);
               if (parsedCommand) {
                 const { command, args } = parsedCommand;
+                botLogger.info(`Memproses command di chat pribadi: ${command}`);
                 await executeCommand(
                   effectiveSock,
                   enhancedMsg,
@@ -476,7 +510,13 @@ const initBot = async () => {
                   command,
                   args
                 );
+              } else {
+                botLogger.info(`Pesan pribadi bukan command: ${messageText}`);
               }
+            } else {
+              botLogger.info(
+                `Mengabaikan pesan pribadi tanpa PREFIX: ${messageText}`
+              );
             }
           } catch (error) {
             botLogger.error("Error processing message:", error);
@@ -962,7 +1002,9 @@ const commandHandler = (text) => {
   if (match) {
     const command = match[1].toLowerCase();
     const args = match[2] ? match[2].trim().split(/\s+/) : [];
+    botLogger.info(`Parsed command: ${command}, args: ${args}`);
     return { command, args };
   }
+  botLogger.info(`Tidak ada command ditemukan di teks: ${text}`);
   return null;
 };

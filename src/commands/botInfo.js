@@ -43,42 +43,78 @@ Oblixn.cmd({
   },
 });
 
-// Command: !help
-Oblixn.cmd({
+global.Oblixn.cmd({
   name: "help",
   alias: ["menu", "?"],
   desc: "Menampilkan daftar perintah yang tersedia",
   category: "general",
   async exec(msg, { args }) {
     try {
-      const commands = [];
-      const isOwner = config.owner.includes(msg.sender.split("@")[0]);
+      const commands = new Map();
+      const isOwner = global.Oblixn.isOwner(msg.sender);
 
-      // Kumpulkan semua command yang valid
-      for (const [_, cmd] of Oblixn.commands) {
-        if (cmd && cmd.name && cmd.category) {
-          // Hanya tambahkan command jika bukan owner/ownercommand atau user adalah owner
-          if (isOwner || (cmd.category !== "owner" && cmd.category !== "ownercommand")) {
-            
-            commands.push({
-              name: cmd.name,
-              category: cmd.category,
+      // Log isi global.Oblixn.commands dengan struktur lengkap
+      const allCommands = Array.from(global.Oblixn.commands.entries()).map(
+        ([key, val]) => ({
+          key,
+          config: val.config || "missing",
+          hasExec: !!val.exec,
+        })
+      );
+      botLogger.info("Isi global.Oblixn.commands:", allCommands);
+
+      for (const [key, cmd] of global.Oblixn.commands) {
+        if (!cmd) {
+          botLogger.warn(`Entry ${key} kosong`);
+          continue;
+        }
+        if (!cmd.config) {
+          botLogger.warn(`Command ${key} tidak memiliki config`, cmd);
+          continue;
+        }
+        if (!cmd.config.name || !cmd.config.category) {
+          botLogger.warn(`Command ${key} config tidak lengkap`, cmd.config);
+          continue;
+        }
+
+        // Hanya ambil command utama (bukan alias)
+        if (key === cmd.config.name) {
+          if (
+            isOwner ||
+            (cmd.config.category !== "owner" &&
+              cmd.config.category !== "ownercommand")
+          ) {
+            commands.set(cmd.config.name, {
+              name: cmd.config.name,
+              category: cmd.config.category,
             });
-            
+            botLogger.info(`Command ${cmd.config.name} ditambahkan ke daftar`);
+          } else {
+            botLogger.info(
+              `Command ${cmd.config.name} skipped: not owner dan category ${cmd.config.category}`
+            );
           }
+        } else {
+          botLogger.info(
+            `Skipping alias: ${key} untuk command ${cmd.config.name}`
+          );
         }
       }
 
-      if (commands.length === 0) {
-        return msg.reply("Belum ada command yang terdaftar.");
+      botLogger.info(
+        "Commands yang dikumpulkan:",
+        Array.from(commands.values())
+      );
+
+      if (commands.size === 0) {
+        botLogger.warn("Tidak ada command yang dikumpulkan setelah filter.");
+        return await msg.reply("Belum ada command yang terdaftar.");
       }
 
-      // Buat pesan help
       const username = msg.pushName || msg.sender.split("@")[0];
       let helpMessage = `Halo kak ${username}, berikut adalah daftar perintah yang tersedia:\n\n*DAFTAR PERINTAH*\n\n`;
 
-      // Kelompokkan command berdasarkan kategori
-      const categories = commands.reduce((acc, cmd) => {
+      const categories = Array.from(commands.values()).reduce((acc, cmd) => {
         if (!acc[cmd.category]) {
           acc[cmd.category] = [];
         }
@@ -86,7 +122,6 @@ Oblixn.cmd({
         return acc;
       }, {});
 
-      // Susun pesan berdasarkan kategori
       Object.entries(categories).forEach(([category, cmds]) => {
         if (cmds.length > 0) {
           const emoji = categoryEmojis[category.toLowerCase()] || "❓";
@@ -98,8 +133,9 @@ Oblixn.cmd({
         }
       });
 
-      helpMessage += "\nGunakan !help <command> untuk info lebih detail";
-
+      helpMessage += `\nGunakan ${
+        process.env.PREFIX || "!"
+      }help <command> untuk info lebih detail`;
       await msg.reply(helpMessage);
     } catch (error) {
       botLogger.error("Error dalam command help:", error);
@@ -107,7 +143,6 @@ Oblixn.cmd({
     }
   },
 });
-
 // Command: !changelog
 Oblixn.cmd({
   name: "changelog",

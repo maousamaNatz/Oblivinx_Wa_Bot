@@ -132,7 +132,6 @@ async function checkAdminStatus(groupId, userId) {
 // Fungsi untuk mengatur instance sock
 function setup(sockInstance) {
   sock = sockInstance;
-  botLogger.info("Pengaturan handler izin selesai");
 }
 
 async function checkStalkUsage(userId) {
@@ -147,8 +146,7 @@ async function checkAIUsage(userId) {
 
 const normalizeJid = (jid) => {
   if (!jid) return "";
-  const normalized = jid.split(":")[0].split("@")[0]; // Ambil hanya nomor telepon
-  botLogger.info(`Normalizing JID: ${jid} -> ${normalized}`);
+  const normalized = jid.split(":")[0].split("@")[0];
   return normalized;
 };
 
@@ -161,16 +159,9 @@ const getGroupAdminInfo = async (sock, groupId) => {
       (p) => p.admin === "admin" || p.admin === "superadmin"
     );
     const botId = normalizeJid(sock.user.id);
-
-    botLogger.info(`Bot ID: ${botId}`);
-    botLogger.info(
-      `Admin IDs: ${admins.map((a) => normalizeJid(a.id)).join(", ")}`
-    );
-
     const isBotAdmin = admins.some((admin) => {
       const adminId = normalizeJid(admin.id);
       const match = adminId === botId;
-      botLogger.info(`Comparing: ${adminId} === ${botId} -> ${match}`);
       return match;
     });
 

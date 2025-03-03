@@ -7,8 +7,10 @@ const { groupCache } = require("../../config/config");
 const errorSentTracker = new Map();
 
 async function handleGroupMessage(sock, msg) {
+  let chat; // Definisikan chat di luar try agar tersedia di catch
   try {
-    const { sender, chat, messageText, pushName, reply } = msg;
+    const { sender, chat: chatId, messageText, pushName, reply } = msg;
+    chat = chatId; // Simpan chatId ke variabel chat untuk digunakan di catch
 
     // Normalisasi userId untuk pengecekan status ban
     const userId = sender.split("@")[0];
@@ -30,14 +32,23 @@ async function handleGroupMessage(sock, msg) {
     if (!groupMetadata) {
       try {
         groupMetadata = await sock.groupMetadata(chat);
-        if (!groupMetadata || !groupMetadata.participants) {
+        if (
+          !groupMetadata ||
+          !groupMetadata.participants ||
+          !Array.isArray(groupMetadata.participants)
+        ) {
           throw new Error("Metadata grup tidak lengkap atau tidak tersedia.");
         }
         groupCache.set(chat, groupMetadata);
-        botLogger.info("Metadata grup berhasil diambil.");
+        botLogger.info("Metadata grup berhasil diambil:", {
+          subject: groupMetadata.subject,
+          participantsCount: groupMetadata.participants.length,
+        });
       } catch (error) {
-        botLogger.error(`Error mendapatkan metadata grup: ${error.message}`);
-        // Cek apakah pesan error sudah dikirim dalam 5 menit terakhir
+        botLogger.error(`Error mendapatkan metadata grup: ${error.message}`, {
+          chat,
+          errorStack: error.stack,
+        });
         const lastSent = errorSentTracker.get(chat);
         if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
           // 5 menit cooldown
@@ -50,13 +61,16 @@ async function handleGroupMessage(sock, msg) {
       }
     }
 
-    // Pastikan participants ada sebelum melanjutkan
-    if (
-      !groupMetadata.participants ||
-      !Array.isArray(groupMetadata.participants)
-    ) {
-      botLogger.error("Participants tidak valid pada groupMetadata.");
-      // Cek apakah pesan error sudah dikirim dalam 5 menit terakhir
+    // Validasi groupMetadata sebelum digunakan
+    if (!groupMetadata || !Array.isArray(groupMetadata.participants)) {
+      botLogger.error("Group metadata tidak valid:", {
+        groupMetadata: groupMetadata ? groupMetadata : "undefined",
+        hasParticipants:
+          groupMetadata && Array.isArray(groupMetadata.participants)
+            ? groupMetadata.participants.length > 0
+            : false,
+        isArray: Array.isArray(groupMetadata?.participants),
+      });
       const lastSent = errorSentTracker.get(chat);
       if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
         // 5 menit cooldown
@@ -129,19 +143,26 @@ async function handleGroupMessage(sock, msg) {
   } catch (error) {
     const errorLog = {
       level: "error",
-      message: `Error di handleGroupMessage`,
+      message: "Terjadi kesalahan di handleGroupMessage",
       error: error.message,
       stack: error.stack,
+      chat: chat || "tidak terdefinisi",
     };
     botLogger.error(JSON.stringify(errorLog));
-    // Cek apakah pesan error sudah dikirim dalam 5 menit terakhir
-    const lastSent = errorSentTracker.get(chat);
-    if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
-      // 5 menit cooldown
-      await msg.reply(
-        "Terjadi kesalahan saat memproses pesan grup. Silakan coba lagi nanti."
+    if (chat) {
+      // Pastikan chat terdefinisi sebelum digunakan
+      const lastSent = errorSentTracker.get(chat);
+      if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
+        // 5 menit cooldown
+        await msg.reply(
+          "Terjadi kesalahan saat memproses pesan grup. Silakan coba lagi nanti."
+        );
+        errorSentTracker.set(chat, Date.now());
+      }
+    } else {
+      botLogger.warn(
+        "Chat tidak terdefinisi dalam blok catch, skipping reply."
       );
-      errorSentTracker.set(chat, Date.now());
     }
   }
 }
