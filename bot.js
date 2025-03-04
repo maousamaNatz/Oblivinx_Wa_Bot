@@ -2,7 +2,7 @@ const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
-  makeInMemoryStore, // Mengganti makeInMemo dengan makeInMemoryStore
+  makeInMemoryStore,
 } = require("@whiskeysockets/baileys");
 const fs = require("fs");
 const { getGroupAdminInfo, normalizeJid } = require("./src/handler/permission");
@@ -31,14 +31,7 @@ const {
   CONNECTION_TIMEOUT,
   groupCache,
 } = require("./config/config");
-const {
-  pool,
-  banUser,
-  blockUserBySystem,
-  checkUserStatus,
-  handleQrCode,
-} = require("./config/dbConf/database");
-const { unbanUser } = require("./src/handler/messageHandler");
+const db = require("./database/confLowDb/lowdb");
 const { handleGroupMessage } = require("./src/handler/groupHandler");
 const crypto = require("crypto");
 
@@ -51,6 +44,14 @@ const log = (type, message) => {
   require("./src/utils/logger").log(message, type);
 };
 
+// Fungsi pembantu untuk membungkus operasi dengan timeout
+const promiseWithTimeout = (promise, ms) => {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Timed Out")), ms)
+  );
+  return Promise.race([promise, timeout]);
+};
+
 function registerCommand(cmdConfig, handler) {
   if (!cmdConfig.pattern || typeof handler !== "function") {
     throw new Error("Command harus memiliki pattern dan handler.");
@@ -58,8 +59,6 @@ function registerCommand(cmdConfig, handler) {
   commands.push({ config: cmdConfig, handler });
 }
 
-// Di dalam bot.js
-// Di dalam bot.js
 async function executeCommand(sock, msg, sender, command, args) {
   try {
     if (!global.Oblixn?.commands?.has(command)) {
@@ -81,7 +80,6 @@ async function executeCommand(sock, msg, sender, command, args) {
     const isOwnerCommand =
       cmd.config.category === "owner" || cmd.config.category === "ownercommand";
 
-    // Jika bot off, hanya owner yang bisa menjalankan command
     if (global.botActive === false && !global.Oblixn.isOwner(msg.sender)) {
       await msg.reply(
         "Bot sedang offline. Hanya owner yang dapat mengakses perintah saat ini."
@@ -89,7 +87,6 @@ async function executeCommand(sock, msg, sender, command, args) {
       return;
     }
 
-    // Jika command khusus owner, batasi akses
     if (isOwnerCommand && !global.Oblixn.isOwner(msg.sender)) {
       await msg.reply("Perintah ini hanya untuk owner bot!");
       return;
@@ -109,7 +106,6 @@ async function executeCommand(sock, msg, sender, command, args) {
   }
 }
 
-// Di dalam bot.js
 function loadCommands(commandsPath) {
   try {
     botLogger.info(`Loading commands from ${commandsPath}`);
@@ -123,7 +119,7 @@ function loadCommands(commandsPath) {
       const fullPath = path.join(commandsPath, file);
       if (fs.lstatSync(fullPath).isFile() && file.endsWith(".js")) {
         try {
-          delete require.cache[require.resolve(fullPath)]; // Clear cache untuk reload
+          delete require.cache[require.resolve(fullPath)];
           require(fullPath);
           loadedCount++;
           botLogger.info(`Loaded command file: ${file}`);
@@ -149,6 +145,7 @@ function loadCommands(commandsPath) {
     });
   }
 }
+
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -171,13 +168,15 @@ global.Oblixn = {
           const userId = msg.sender.split("@")[0];
           let normalizedUserId = userId.startsWith("08")
             ? "62" + userId.slice(1)
-            : userId.replace("+62", "");
-          const { isBanned, banInfo } = await checkBanStatus(normalizedUserId);
-          if (isBanned) {
-            const banDate = new Date(banInfo.banned_at).toLocaleDateString(
-              "id-ID"
-            );
-            const banMessage = `❌ *Akses Ditolak*\n\nMaaf, Anda telah dibanned dari menggunakan bot!\n\n*Detail Ban:*\n📝 Alasan: ${banInfo.reason}\n📅 Tanggal: ${banDate}\n\nSilakan hubungi owner untuk unbanned.`;
+            : userId.replace("+62", "62");
+          const status = await db.checkUserStatus(normalizedUserId);
+          if (status.isBanned) {
+            const banDate = status.banReason
+              ? new Date().toLocaleDateString("id-ID")
+              : new Date().toLocaleDateString("id-ID");
+            const banMessage = `❌ *Akses Ditolak*\n\nMaaf, Anda telah dibanned dari menggunakan bot!\n\n*Detail Ban:*\n📝 Alasan: ${
+              status.banReason || "Tidak diketahui"
+            }\n📅 Tanggal: ${banDate}\n\nSilakan hubungi owner untuk unbanned.`;
             await msg.reply(banMessage);
             return;
           }
@@ -194,7 +193,7 @@ global.Oblixn = {
     };
 
     const cmdConfig = {
-      name, // Pastikan name disimpan di config
+      name,
       pattern: `^${escapeRegex(name)}(?:\\s+(.*))?$`,
       secondPattern: alias.map((cmd) => `^${escapeRegex(cmd)}(?:\\s+(.*))?$`),
       fromMe: false,
@@ -208,7 +207,7 @@ global.Oblixn = {
     botLogger.info(`Command ${name} registered with config:`, cmdConfig);
 
     alias.forEach((alt) => {
-      this.commands.set(alt, commandData); // Alias menggunakan data yang sama
+      this.commands.set(alt, commandData);
       botLogger.info(`Alias ${alt} registered for ${name}`);
     });
   },
@@ -217,13 +216,12 @@ global.Oblixn = {
       botLogger.error("Sender tidak didefinisikan dalam pengecekan owner.");
       return false;
     }
-    const senderNumber = sender.split("@")[0]; // Ambil nomor tanpa domain
+    const senderNumber = sender.split("@")[0];
     const ownerNumbers = [
       ...process.env.OWNER_NUMBER_ONE.split(",").map((num) => num.trim()),
       ...(process.env.OWNER_NUMBER_TWO?.split(",").map((num) => num.trim()) ||
         []),
     ].map((num) => {
-      // Normalisasi nomor owner agar konsisten
       return num.startsWith("+62")
         ? num.replace("+62", "62")
         : num.startsWith("08")
@@ -287,7 +285,7 @@ const initBot = async () => {
           activeSocket.ws.close();
           activeSocket.ev.removeAllListeners();
         }
-        await initBot(); // Rekursif memanggil initBot
+        await initBot();
       } catch (error) {
         botLogger.error("Gagal melakukan reconnect:", error);
         isReconnecting = false;
@@ -300,6 +298,7 @@ const initBot = async () => {
           const { connection, lastDisconnect, qr } = update;
           if (qr && !sock.user) {
             botLogger.info("QR Code baru tersedia, scan untuk login");
+            await db.handleQrCode(qr, sock.user?.id.split(":")[0] || "unknown");
           }
           if (connection === "close") {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -346,7 +345,7 @@ const initBot = async () => {
             }
 
             if (global.botActive === false) {
-              if (!global.Oblixn.isOwner(msg.sender)) {
+              if (!global.Oblixn.isOwner(msg.key.participant || msg.key.remoteJid)) {
                 botLogger.info(
                   "Bot dalam status nonaktif, pesan diabaikan (bukan owner)."
                 );
@@ -370,7 +369,71 @@ const initBot = async () => {
                 ?.conversation ||
               "";
             let groupInfo = null;
+            let groupMetadata = null;
+
+            // Normalisasi userId dan groupId
+            const userId = normalizeJid(participant);
+            const groupId = isGroup ? normalizeJid(sender) : null;
+
+            // Otomatis membuat atau memperbarui user
+            let userData = await db.getUser(userId);
+            if (!userData) {
+              const newUser = await db.addUser({
+                user_id: userId,
+                username: msg.pushName,
+              });
+              userData = newUser.data;
+              botLogger.info(`User baru dibuat: ${userId}`);
+            }
+
+            // Otomatis menghitung pesan dan leveling
+            userData.total_messages += 1;
+            const messagesForLevelUp = 120;
+            const newLevel = Math.floor(userData.total_messages / messagesForLevelUp) + 1;
+            if (newLevel > userData.level) {
+              userData.level = newLevel;
+              userData.updated_at = new Date().toISOString();
+              botLogger.info(`User ${userId} naik ke level ${newLevel}`);
+              await effectiveSock.sendMessage(sender, {
+                text: `🎉 Selamat! Anda naik ke level ${newLevel} setelah mengirim ${userData.total_messages} pesan!`,
+              });
+            }
+            await db.updateUser(userId, {
+              total_messages: userData.total_messages,
+              level: userData.level,
+              updated_at: userData.updated_at,
+            });
+
+            // Otomatis membuat atau memperbarui group (jika pesan dari grup)
             if (isGroup) {
+              let groupData = await db.getGroup(groupId);
+              if (!groupData) {
+                try {
+                  groupMetadata = await promiseWithTimeout(
+                    effectiveSock.groupMetadata(groupId),
+                    5000 // Timeout 5 detik
+                  );
+                  const newGroup = await db.addGroup({
+                    group_id: groupId,
+                    group_name: groupMetadata.subject || "Unnamed Group",
+                    owner_id: userId,
+                  });
+                  groupData = newGroup.data;
+                  botLogger.info(`Grup baru dibuat: ${groupId}`);
+                } catch (error) {
+                  botLogger.warn(
+                    `Gagal mengambil metadata grup ${groupId}: ${error.message}, menggunakan default`
+                  );
+                  const newGroup = await db.addGroup({
+                    group_id: groupId,
+                    group_name: "Unnamed Group",
+                    owner_id: userId,
+                  });
+                  groupData = newGroup.data;
+                  botLogger.info(`Grup baru dibuat dengan default: ${groupId}`);
+                }
+              }
+
               if (groupCache.has(sender)) {
                 groupInfo = groupCache.get(sender);
                 if (
@@ -391,8 +454,10 @@ const initBot = async () => {
               }
               if (!groupInfo) {
                 try {
-                  groupInfo = await getGroupAdminInfo(effectiveSock, sender);
-
+                  groupInfo = await promiseWithTimeout(
+                    getGroupAdminInfo(effectiveSock, sender),
+                    5000
+                  );
                   groupCache.set(sender, groupInfo);
                 } catch (error) {
                   botLogger.error(
@@ -404,7 +469,25 @@ const initBot = async () => {
               botLogger.info(
                 `Group Info - isBotAdmin: ${groupInfo?.isBotAdmin || false}`
               );
+
+              // Gunakan groupMetadata dari cache atau ambil sekali saja
+              if (!groupMetadata && groupInfo) {
+                groupMetadata = groupInfo;
+              } else if (!groupMetadata) {
+                try {
+                  groupMetadata = await promiseWithTimeout(
+                    effectiveSock.groupMetadata(groupId),
+                    5000
+                  );
+                } catch (error) {
+                  botLogger.warn(
+                    `Gagal mengambil groupMetadata: ${error.message}`
+                  );
+                  groupMetadata = null;
+                }
+              }
             }
+
             const enhancedMsg = {
               ...msg,
               sock: effectiveSock,
@@ -414,19 +497,16 @@ const initBot = async () => {
               isGroup,
               groupInfo,
               isAdmin: isGroup
-                ? groupInfo?.adminList.some(
+                ? groupInfo?.adminList?.some(
                     (admin) =>
                       normalizeJid(admin.id) === normalizeJid(participant)
-                  )
+                  ) || false
                 : false,
-              isBotAdmin: isGroup ? groupInfo?.isBotAdmin : false,
+              isBotAdmin: isGroup ? groupInfo?.isBotAdmin || false : false,
               botNumber: effectiveSock.user?.id || "unknown",
               pushName: msg.pushName,
               messageText,
-              groupMetadata: isGroup
-                ? groupCache.get(sender) ||
-                  (await effectiveSock.groupMetadata(sender))
-                : null,
+              groupMetadata: isGroup ? groupMetadata || groupCache.get(sender) : null,
               mentions:
                 msg.message?.extendedTextMessage?.contextInfo?.mentionedJid ||
                 [],
@@ -439,9 +519,7 @@ const initBot = async () => {
                   return await effectiveSock.sendMessage(
                     sender,
                     messageContent,
-                    {
-                      quoted: msg,
-                    }
+                    { quoted: msg }
                   );
                 } catch (error) {
                   botLogger.error(`Error mengirim balasan: ${error.message}`, {
@@ -460,7 +538,6 @@ const initBot = async () => {
             );
 
             if (isGroup) {
-              // Hanya proses jika pesan adalah perintah atau event grup (selamat datang/perpisahan)
               if (messageText.startsWith(PREFIX)) {
                 const parsedCommand = commandHandler(messageText);
                 if (parsedCommand) {
@@ -485,7 +562,6 @@ const initBot = async () => {
                   return;
                 }
               } else if (msg.key.participant && msg.messageStubType) {
-                // Hanya proses event grup (misalnya, peserta bergabung/keluar)
                 botLogger.info(
                   `Memproses event grup: ${messageText || "event"}`
                 );
@@ -493,11 +569,10 @@ const initBot = async () => {
                 return;
               } else {
                 botLogger.info(`Mengabaikan pesan grup biasa: ${messageText}`);
-                return; // Abaikan pesan biasa tanpa PREFIX
+                return;
               }
             }
 
-            // Proses pesan pribadi hanya jika diawali PREFIX
             if (messageText.startsWith(PREFIX)) {
               const parsedCommand = commandHandler(messageText);
               if (parsedCommand) {
@@ -536,11 +611,7 @@ const initBot = async () => {
             await sock.sendMessage(callerId, {
               text: `⚠️ *PERINGATAN*\nAnda telah mencoba menelepon bot sebanyak ${MAX_CALL_ATTEMPTS} kali. Nomor Anda akan diblokir oleh sistem.`,
             });
-            await blockUserBySystem(
-              callerId,
-              "Terlalu banyak percobaan panggilan",
-              "system"
-            );
+            await db.blockUserBySystem(callerId);
             delete callAttempts[callerId];
             return;
           }
@@ -563,7 +634,10 @@ const initBot = async () => {
           }
           for (const update of updates) {
             try {
-              const metadata = await sock.groupMetadata(update.id);
+              const metadata = await promiseWithTimeout(
+                sock.groupMetadata(update.id),
+                5000
+              );
               groupCache.set(update.id, metadata);
             } catch (error) {
               botLogger.error(`Error updating group ${update.id}:`, error);
@@ -584,7 +658,10 @@ const initBot = async () => {
             return;
           }
           try {
-            const metadata = await sock.groupMetadata(event.id);
+            const metadata = await promiseWithTimeout(
+              sock.groupMetadata(event.id),
+              5000
+            );
             groupCache.set(event.id, metadata);
           } catch (error) {
             botLogger.error(
@@ -600,16 +677,11 @@ const initBot = async () => {
       sock.ev.on("messages.upsert", handlers.messagesUpsert);
       sock.ev.on("call", handlers.call);
       sock.ev.on("groups.update", handlers["groups.update"]);
-      sock.ev.on(
-        "group-participants.update",
-        handlers["group-participants.update"]
-      );
+      sock.ev.on("group-participants.update", handlers["group-participants.update"]);
       sock._eventHandlers = handlers;
     };
 
-    const { state, saveCreds } = await useMultiFileAuthState(
-      "auth_info_baileys"
-    );
+    const { state, saveCreds } = await useMultiFileAuthState("auth_info_baileys");
     activeSocket = makeWASocket({
       auth: state,
       printQRInTerminal: true,
@@ -636,68 +708,47 @@ const initBot = async () => {
     const monitorMemoryInterval = setInterval(() => {
       const used = process.memoryUsage();
       botLogger.info(
-        `Memory usage - RSS: ${formatBytes(used.rss)}, Heap: ${formatBytes(
-          used.heapUsed
-        )}`
+        `Memory usage - RSS: ${formatBytes(used.rss)}, Heap: ${formatBytes(used.heapUsed)}`
       );
     }, config.monitorMemoryInterval);
 
     activeSocket._intervals = [clearCacheInterval, monitorMemoryInterval];
 
+    // Integrasi fungsi database AJV ke global.db
     global.db = {
       ...global.db,
-      banUser,
-      unbanUser,
+      banUser: db.banUser,
+      unbanUser: db.unbanUser,
+      checkUserStatus: db.checkUserStatus,
+      blockUserBySystem: db.blockUserBySystem,
+      handleQrCode: db.handleQrCode,
+      getBotInstances: db.getBotInstances,
       blockUser: async (userId, reason, blockedBy) => {
         try {
           const cleanUserId = normalizeJid(userId);
-          const [result] = await pool.execute(
-            `INSERT INTO blocked_users (user_id, reason, blocked_by) 
-             VALUES (?, ?, ?)
-             ON DUPLICATE KEY UPDATE 
-             reason = VALUES(reason),
-             blocked_by = VALUES(blocked_by),
-             blocked_at = CURRENT_TIMESTAMP`,
-            [cleanUserId, reason, blockedBy]
-          );
-          return result;
+          const result = await db.blockUserBySystem(cleanUserId);
+          if (result.success) return { affectedRows: 1 };
+          throw new Error(result.message);
         } catch (error) {
-          botLogger.error(`Error in blockUser: ${error.message}`, {
-            userId,
-            reason,
-            blockedBy,
-          });
+          botLogger.error(`Error in blockUser: ${error.message}`, { userId, reason, blockedBy });
           throw error;
         }
       },
       unblockUser: async (userId, unblockBy) => {
         try {
           const cleanUserId = normalizeJid(userId);
-          const [result] = await pool.execute(
-            `UPDATE blocked_users SET 
-             is_blocked = 0, 
-             unblocked_by = ?, 
-             unblocked_at = CURRENT_TIMESTAMP
-             WHERE user_id = ? AND is_blocked = 1`,
-            [unblockBy, cleanUserId]
-          );
-          return result.affectedRows > 0;
+          const result = await db.unbanUser(cleanUserId);
+          return result.success && result.wasUnbanned;
         } catch (error) {
-          botLogger.error(`Error in unblockUser: ${error.message}`, {
-            userId,
-            unblockBy,
-          });
+          botLogger.error(`Error in unblockUser: ${error.message}`, { userId, unblockBy });
           throw error;
         }
       },
       isBlocked: async (userId) => {
         try {
           const cleanUserId = normalizeJid(userId);
-          const [rows] = await pool.execute(
-            `SELECT * FROM blocked_users WHERE user_id = ? AND is_blocked = 1`,
-            [cleanUserId]
-          );
-          return rows.length > 0;
+          const status = await db.checkUserStatus(cleanUserId);
+          return status.isBlocked;
         } catch (error) {
           botLogger.error(`Error in isBlocked: ${error.message}`, { userId });
           return false;
@@ -722,7 +773,7 @@ function formatBytes(bytes) {
 
 function setupGlobalErrorHandlers() {
   process.on("unhandledRejection", (reason, promise) => {
-    if (reason.message.includes("Timed Out")) {
+    if (reason.message?.includes("Timed Out")) {
       botLogger.warn("Timeout detected, attempting to reconnect...");
       if (!global.isConnected && retryCount < MAX_RETRIES) {
         setTimeout(async () => {
@@ -744,10 +795,9 @@ function setupGlobalErrorHandlers() {
 
 async function initializeAllBots() {
   try {
-    const [bots] = await pool.query(
-      'SELECT number, credentials FROM bot_instances WHERE status = "active"'
-    );
-    for (const bot of bots) {
+    const bots = await db.getBotInstances();
+    const activeBots = bots.filter((bot) => bot.status === "active");
+    for (const bot of activeBots) {
       try {
         await startChildBot(bot.number, JSON.parse(bot.credentials));
         botLogger.info(`Bot ${bot.number} berhasil diinisialisasi`);
@@ -775,11 +825,8 @@ initializeAllBots();
 })();
 
 process.on("uncaughtException", (err) => {
-  if (botLogger) {
-    botLogger.error("Uncaught Exception: " + err);
-  } else {
-    console.error("Fallback error logging:", err);
-  }
+  if (botLogger) botLogger.error("Uncaught Exception: " + err);
+  else console.error("Fallback error logging:", err);
   process.exit(1);
 });
 
@@ -807,12 +854,16 @@ async function cleanupAndExit(code = 0) {
 
 async function checkBanStatus(userId) {
   try {
-    const status = await checkUserStatus(userId);
+    const status = await db.checkUserStatus(userId);
     botLogger.info(`Memeriksa status ban untuk user: ${userId}`);
-    return {
-      isBanned: status.isBanned,
-      banInfo: status.isBanned ? { reason: "Diblokir oleh admin" } : null,
-    };
+    let banInfo = null;
+    if (status.isBanned) {
+      banInfo = {
+        reason: status.banReason || "Diblokir oleh admin",
+        banned_at: status.created_at || new Date().toISOString(),
+      };
+    }
+    return { isBanned: status.isBanned, banInfo };
   } catch (error) {
     botLogger.error("Error memeriksa status ban:", error);
     return { isBanned: false, banInfo: null };
@@ -838,16 +889,29 @@ async function startChildBot(phoneNumber, credentials) {
       );
     };
 
-    if (!validateCredentials(credentials.creds)) {
+    if (!validateCredentials(credentials)) {
       console.warn(`⚠️ Regenerasi credentials untuk ${phoneNumber}`);
       const { state } = await useMultiFileAuthState(
         path.join(__dirname, `sessions/${phoneNumber}`)
       );
       try {
-        await pool.execute(
-          "UPDATE bot_instances SET credentials = ? WHERE number = ?",
-          [JSON.stringify(state), phoneNumber]
-        );
+        const bots = await db.getBotInstances();
+        const exists = bots.find((bot) => bot.number === phoneNumber);
+        if (exists) {
+          exists.credentials = JSON.stringify(state);
+          exists.updated_at = new Date().toISOString();
+          await db.writeDatabase({ bot_instances: bots });
+        } else {
+          bots.push({
+            id: db.getNewId(bots),
+            number: phoneNumber,
+            credentials: JSON.stringify(state),
+            status: "active",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          await db.writeDatabase({ bot_instances: bots });
+        }
         console.log(`✅ Berhasil update credentials ${phoneNumber}`);
         credentials = state;
       } catch (dbError) {
@@ -872,16 +936,23 @@ async function startChildBot(phoneNumber, credentials) {
       const { connection, lastDisconnect, qr } = update;
       if (qr && !childSock.user) {
         console.log("⚠️ QR Code diperlukan untuk", phoneNumber);
-        handleQrCode(qr, phoneNumber).catch(console.error);
+        db.handleQrCode(qr, phoneNumber).catch(console.error);
       }
       if (connection === "close") {
-        const statusCode = lastDisconnect.error?.output?.statusCode;
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
         if (statusCode === 401 || statusCode === 403 || statusCode === 404) {
           fs.rmSync(path.join(__dirname, `sessions/${phoneNumber}`), {
             recursive: true,
             force: true,
           });
           console.log("⚠️ Session dihapus karena error auth");
+          db.getBotInstances().then((bots) => {
+            const bot = bots.find((b) => b.number === phoneNumber);
+            if (bot) {
+              bot.status = "inactive";
+              db.writeDatabase({ bot_instances: bots });
+            }
+          });
         }
       }
     });
@@ -889,10 +960,13 @@ async function startChildBot(phoneNumber, credentials) {
     return childSock;
   } catch (error) {
     console.error(`🚨 Gagal mutlak untuk ${phoneNumber}:`, error);
-    await pool.execute(
-      "UPDATE bot_instances SET status = 'inactive' WHERE number = ?",
-      [phoneNumber]
-    );
+    db.getBotInstances().then((bots) => {
+      const bot = bots.find((b) => b.number === phoneNumber);
+      if (bot) {
+        bot.status = "inactive";
+        db.writeDatabase({ bot_instances: bots });
+      }
+    });
     throw new Error(`Di nonaktifkan otomatis: ${error.message}`);
   }
 }
@@ -908,9 +982,8 @@ process.on("SIGINT", async () => {
 
 async function startChildBots() {
   try {
-    const [rows] = await pool.execute(
-      'SELECT number FROM bot_instances WHERE status = "active"'
-    );
+    const bots = await db.getBotInstances();
+    const rows = bots.filter((bot) => bot.status === "active");
     for (const row of rows) {
       if (row.number !== config.mainNumber) {
         await initializeBot(row.number);
@@ -941,7 +1014,7 @@ async function initializeBot(phoneNumber) {
     const { state, saveCreds } = await useMultiFileAuthState(authFolder);
     sock = makeWASocket({
       auth: { creds: state.creds, keys: state.keys },
-      logger: PinoLogger(),
+      logger: baileysLogger,
       msgRetryCounterCache,
       getMessage: async (key) => {
         const message = await store.loadMessage(key.remoteJid, key.id);
@@ -950,19 +1023,13 @@ async function initializeBot(phoneNumber) {
       connectTimeoutMs: 30000,
       keepAliveIntervalMs: 15000,
       autoReconnect: true,
-      connectionOptions: {
-        timeout: 30000,
-        keepAlive: true,
-      },
+      connectionOptions: { timeout: 30000, keepAlive: true },
     });
     const setupEventHandlers = () => {
       sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect } = update;
         if (connection === "close") {
-          console.log(
-            `🔌 Koneksi ${phoneNumber} terputus:`,
-            lastDisconnect.error
-          );
+          console.log(`🔌 Koneksi ${phoneNumber} terputus:`, lastDisconnect.error);
         } else if (connection === "open") {
           console.log(`✅ Koneksi ${phoneNumber} stabil`);
         }

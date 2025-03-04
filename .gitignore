@@ -9,7 +9,7 @@ app-state-sync-key-*
 multi-device-*
 baileys_store_*
 /store/
-
+Oblivinx_bot_Db_1
 # Logs
 logs/
 !logs/.gitkeep

@@ -6,6 +6,7 @@ const os = require("os");
 const dotenv = require("dotenv");
 dotenv.config();
 const { readFileSync } = require("fs");
+const { getAchievementById } = require("../database/confLowDb/lowdb");
 // Load game data dengan error handling yang lebih baik
 const loadGameData = (filename) => {
   try {
@@ -177,15 +178,15 @@ const memoryMonitor = {
 
 // Konfigurasi bot
 let config = {
-  number: process.env.PHONE_NUMBER || '',
+  number: process.env.PHONE_NUMBER || "",
   logging: {
     colors: {
-      error: 'red bold',
-      warn: 'yellow bold',
-      info: 'green bold',
-      success: 'cyan bold',
-      debug: 'blue bold',
-      trace: 'white bold'
+      error: "red bold",
+      warn: "yellow bold",
+      info: "green bold",
+      success: "cyan bold",
+      debug: "blue bold",
+      trace: "white bold",
     },
     levels: {
       error: 0,
@@ -193,8 +194,8 @@ let config = {
       info: 2,
       success: 3,
       debug: 4,
-      trace: 5
-    }
+      trace: 5,
+    },
   },
   gameData: {
     tebakGambar: loadGameData("tebakGambar.json"),
@@ -239,7 +240,6 @@ let config = {
     tebaklagu: loadGameData("tebaklagu.json"),
     rpg: loadGameData("rpg.json"),
     dungeon: loadGameData("dungeon.json"),
-    
   },
   coinmarketcap: {
     apiKey: process.env.COINMARKETCAP_API_KEY,
@@ -271,10 +271,10 @@ let config = {
     logger: false,
     getMessage: async (key) => {
       return {
-        conversation: '(Pesan tidak tersedia di cache)'
+        conversation: "(Pesan tidak tersedia di cache)",
       };
     },
-    shouldIgnoreJid: jid => isJidBroadcast(jid), // Hanya abaikan broadcast lists
+    shouldIgnoreJid: (jid) => isJidBroadcast(jid), // Hanya abaikan broadcast lists
   },
   author: {
     author1: {
@@ -290,6 +290,12 @@ let config = {
       roles: process.env.OWNER2_ROLES,
     },
   },
+  folderdb: "../../database/Oblivinx_bot_Db_1",
+  dbjson:  "database.json",
+  groupjson: "group.json",
+  achievementjson: "achievement.json",   
+  leveljson: "level.json",   
+  
   sessionCleanupInterval: 1800000, // 30 menit
   sessionMaxAge: 86400000, // 24 jam
   download: {
@@ -302,60 +308,61 @@ let config = {
     },
   },
   logging: {
-    level: 'debug',
-    dir: 'logs',
-    errorLog: 'error.log',
-    combinedLog: 'combined.log'
+    level: "debug",
+    dir: "logs",
+    errorLog: "error.log",
+    combinedLog: "combined.log",
   },
   stalkApi: {
     key: process.env.STALK_API_KEY,
     igUrl: "https://api.example.com/instagram",
     tiktokUrl: "https://api.example.com/tiktok",
-    githubUrl: "https://api.example.com/github"
+    githubUrl: "https://api.example.com/github",
   },
   nsfwThreshold: 0.82, // Threshold default
   nsfwActions: {
     deleteMessage: true,
     warnUser: true,
     banThreshold: 3, // 3 pelanggaran otomatis ban
-    cooldown: 300 // 5 menit dalam detik
+    cooldown: 300, // 5 menit dalam detik
   },
   wsOptions: {
     headers: {
-      'Origin': 'https://web.whatsapp.com',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+      Origin: "https://web.whatsapp.com",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     },
     timeout: 45000,
     reconnect: true,
     maxRetries: 5,
     backoff: {
-      type: 'exponential',
-      delay: 1000
-    }
+      type: "exponential",
+      delay: 1000,
+    },
   },
   sticker: {
     packname: "NatzBot",
     author: "ORBIT STUDIO",
-    quality: 70
+    quality: 70,
   },
   leveling: {
     xpPerMessage: {
       text: 10,
       image: 15,
       video: 20,
-      sticker: 5
+      sticker: 5,
     },
     xpCooldown: 60, // detik
     dailyCap: 500,
     weeklyCap: 3000,
     levelFormula: (level) => Math.floor(100 * Math.pow(1.1, level)),
     roleRewards: {
-      5: { badge: '🥉', boost: 1.1 },
-      10: { badge: '🥈', boost: 1.2 },
-      20: { badge: '🥇', boost: 1.3 },
-      30: { badge: '💎', boost: 1.5 }
-    }
-  }
+      5: { badge: "🥉", boost: 1.1 },
+      10: { badge: "🥈", boost: 1.2 },
+      20: { badge: "🥇", boost: 1.3 },
+      30: { badge: "💎", boost: 1.5 },
+    },
+  },
 };
 
 // Validasi nomor wajib
