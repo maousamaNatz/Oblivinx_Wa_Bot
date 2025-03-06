@@ -34,15 +34,34 @@ const {
 const db = require("./database/confLowDb/lowdb");
 const { handleGroupMessage } = require("./src/handler/groupHandler");
 const crypto = require("crypto");
-
+const {log} = require('./src/utils/logger');
 process.env.PREFIX = process.env.PREFIX?.trim() || "!";
 
 const id = fs.readFileSync("./src/i18n/langId.json", "utf8");
 const en = fs.readFileSync("./src/i18n/langEn.json", "utf8");
+// Define the path to the ASCII file
+const asciiFilePath = path.join(__dirname, 'database', 'ascii.txt');
 
-const log = (type, message) => {
-  require("./src/utils/logger").log(message, type);
-};
+// Function to read the ASCII file
+function readAsciiFile() {
+    fs.readFile(asciiFilePath, 'utf8', (err, data) => {
+        if (err) {
+            log('Error reading the file:', 'error');
+            return;
+        }
+        log(data , 'infoowner');
+    });
+
+    log( 'Hello everyone Im Natz', 'infoowner');
+    log( 'welcome to Oblivinx bot! Please enjoy the services available. ', 'infoowner');
+    log( 'If you encounter any bugs, please do not hesitate to reach out to the contacts listed. ', 'infoowner');
+    log( 'You can also contribute to the development of this bot by forking our repository on GitHub and submitting a pull request.', 'infoowner');
+    log( 'Thank you for using Oblivinx bot, hope it helps! 🚀', 'infoowner');
+    log( 'Contact Developer:', 'infoowner');
+    log( 'Natz: 081910058235', 'infoowner');
+    log( 'Instagram: patch.cpp', 'infoowner');
+    log( 'Hello everyone Im Natz', 'infoowner');
+}
 
 // Fungsi pembantu untuk membungkus operasi dengan timeout
 const promiseWithTimeout = (promise, ms) => {
@@ -122,7 +141,6 @@ function loadCommands(commandsPath) {
           delete require.cache[require.resolve(fullPath)];
           require(fullPath);
           loadedCount++;
-          botLogger.info(`Loaded command file: ${file}`);
         } catch (error) {
           botLogger.error(
             `Error loading command file ${file}: ${error.message}`,
@@ -132,13 +150,7 @@ function loadCommands(commandsPath) {
       }
     });
     botLogger.info(`${loadedCount} command files loaded successfully`);
-    botLogger.info(
-      "Registered commands:",
-      Array.from(global.Oblixn.commands.entries()).map(([name, cmd]) => ({
-        name,
-        category: cmd.config?.category || "unknown",
-      }))
-    );
+    
   } catch (error) {
     botLogger.error(`Error loading commands: ${error.message}`, {
       stack: error.stack,
@@ -204,11 +216,8 @@ global.Oblixn = {
 
     const commandData = { config: cmdConfig, exec: wrappedExec };
     this.commands.set(name, commandData);
-    botLogger.info(`Command ${name} registered with config:`, cmdConfig);
-
     alias.forEach((alt) => {
       this.commands.set(alt, commandData);
-      botLogger.info(`Alias ${alt} registered for ${name}`);
     });
   },
   isOwner: function (sender) {
@@ -795,6 +804,7 @@ function setupGlobalErrorHandlers() {
 
 async function initializeAllBots() {
   try {
+    await db.initializeDatabase(); // Pastikan database diinisialisasi
     const bots = await db.getBotInstances();
     const activeBots = bots.filter((bot) => bot.status === "active");
     for (const bot of activeBots) {
@@ -815,9 +825,13 @@ initializeAllBots();
 (async () => {
   botLogger.info("Starting bot...");
   setupGlobalErrorHandlers();
+  readAsciiFile();
   loadCommands(path.join(__dirname, "src/commands"));
   try {
+    await db.initializeDatabase(); // Pastikan database diinisialisasi sebelum operasi lain
+    await initializeAllBots(); // Panggil setelah initBot
     await initBot();
+    await startChildBots(); // Panggil setelah initBot
   } catch (error) {
     botLogger.error(`Failed to start bot: ${error.message}`);
     process.exit(1);
@@ -955,6 +969,17 @@ async function startChildBot(phoneNumber, credentials) {
           });
         }
       }
+      if (connection === "open") {
+        db.getBotInstances().then(async (bots) => {
+          const bot = bots.find((b) => b.number === phoneNumber);
+          if (bot) {
+            bot.status = "active";
+            bot.updated_at = new Date().toISOString();
+            await db.writeDatabase({ bot_instances: bots });
+            botLogger.info(`Bot ${phoneNumber} status updated to active`);
+          }
+        });
+      }
     });
 
     return childSock;
@@ -982,6 +1007,7 @@ process.on("SIGINT", async () => {
 
 async function startChildBots() {
   try {
+    await db.initializeDatabase(); // Pastikan database diinisialisasi
     const bots = await db.getBotInstances();
     const rows = bots.filter((bot) => bot.status === "active");
     for (const row of rows) {
@@ -1075,3 +1101,4 @@ const commandHandler = (text) => {
   botLogger.info(`Tidak ada command ditemukan di teks: ${text}`);
   return null;
 };
+

@@ -1,6 +1,5 @@
-// src/handler/groupHandler.js
 const { botLogger } = require("../utils/logger");
-const { checkUserStatus } = require("../../config/dbConf/database");
+const db = require("../../database/confLowDb/lowdb"); // Impor dari lowdb.js yang menggunakan AJV
 const { groupCache } = require("../../config/config");
 
 // Objek untuk melacak pesan error yang sudah dikirim
@@ -16,13 +15,15 @@ async function handleGroupMessage(sock, msg) {
     const userId = sender.split("@")[0];
     const normalizedUserId = userId.startsWith("08")
       ? "62" + userId.slice(1)
-      : userId.replace("+62", "");
+      : userId.replace("+62", "62");
 
-    // Cek status ban pengguna
-    const { isBanned, banInfo } = await checkBanStatus(normalizedUserId);
-    if (isBanned) {
-      const banDate = new Date(banInfo.banned_at).toLocaleDateString("id-ID");
-      const banMessage = `❌ *Akses Ditolak*\n\nMaaf, Anda telah dibanned dari menggunakan bot!\n\n*Detail Ban:*\n📝 Alasan: ${banInfo.reason}\n📅 Tanggal: ${banDate}\n\nSilakan hubungi owner untuk unbanned.`;
+    // Cek status ban pengguna menggunakan fungsi dari lowdb.js
+    const status = await db.checkUserStatus(normalizedUserId);
+    if (status.isBanned) {
+      const banDate = new Date().toLocaleDateString("id-ID"); // Gunakan tanggal saat ini jika tidak ada data ban spesifik
+      const banMessage = `❌ *Akses Ditolak*\n\nMaaf, Anda telah dibanned dari menggunakan bot!\n\n*Detail Ban:*\n📝 Alasan: ${
+        status.banReason || "Tidak diketahui"
+      }\n📅 Tanggal: ${banDate}\n\nSilakan hubungi owner untuk unbanned.`;
       await reply(banMessage);
       return;
     }
@@ -132,9 +133,9 @@ async function handleGroupMessage(sock, msg) {
     // Contoh pesan selamat datang atau perpisahan
     if (msg.key.participant && msg.messageStubType) {
       const action =
-        msg.messageStubType === "GROUP_PARTICIPANT_ADD"
+        msg.messageStubType === 28 // GROUP_PARTICIPANT_ADD
           ? "bergabung"
-          : "keluar";
+          : "keluar"; // GROUP_PARTICIPANT_REMOVE
       await reply(
         `@${userId} telah ${action} dari grup ${groupMetadata.subject}!`
       );
@@ -150,7 +151,6 @@ async function handleGroupMessage(sock, msg) {
     };
     botLogger.error(JSON.stringify(errorLog));
     if (chat) {
-      // Pastikan chat terdefinisi sebelum digunakan
       const lastSent = errorSentTracker.get(chat);
       if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
         // 5 menit cooldown
@@ -169,14 +169,14 @@ async function handleGroupMessage(sock, msg) {
 
 async function checkBanStatus(userId) {
   try {
-    const status = await checkUserStatus(userId);
+    const status = await db.checkUserStatus(userId); // Gunakan fungsi dari lowdb.js
     botLogger.info(`Memeriksa status ban untuk user: ${userId}`);
     return {
       isBanned: status.isBanned,
       banInfo: status.isBanned
         ? {
-            reason: status.reason || "Tidak ada alasan spesifik",
-            banned_at: status.banned_at || new Date(),
+            reason: status.banReason || "Tidak ada alasan spesifik",
+            banned_at: status.created_at || new Date(), // Gunakan created_at dari database jika ada
           }
         : null,
     };

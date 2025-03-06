@@ -1,12 +1,6 @@
 const { botLogger } = require("../utils/logger");
 const { config } = require("../../config/config");
-const {
-  banUser,
-  pool,
-  unbanUser,
-  checkBanStatus,
-  getListBannedUsers,
-} = require("../../config/dbConf/database");
+const db = require("../../database/confLowDb/lowdb"); // Impor database AJV
 const { normalizeJid } = require("../handler/permission");
 const fs = require("fs");
 const path = require("path");
@@ -16,7 +10,7 @@ global.Oblixn.cmd({
   name: "ownerinfo",
   alias: ["owner"],
   desc: "Menampilkan informasi owner bot",
-  category: "ownercommand", // Diubah ke ownercommand
+  category: "ownercommand",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -43,11 +37,7 @@ global.Oblixn.cmd({
         `• WA: wa.me/${owner2}\n\n` +
         `_Note: Mohon chat owner jika ada keperluan penting saja_`;
 
-      await msg.sock.sendMessage(
-        msg.chat,
-        { text: basicMessage },
-        { quoted: msg }
-      );
+      await msg.sock.sendMessage(msg.chat, { text: basicMessage }, { quoted: msg });
     } catch (error) {
       botLogger.error("Error in ownerinfo command:", {
         name: error.name,
@@ -132,7 +122,7 @@ global.Oblixn.cmd({
     }
 
     try {
-      const senderNumber = normalizeJid(msg.sender);
+      const senderNumber = normalizeJid(msg.sender).split("@")[0];
       const mentionJid = `${senderNumber}@s.whatsapp.net`;
       const message = args.join(" ");
       const chats = await msg.sock.groupFetchAllParticipating();
@@ -253,10 +243,14 @@ global.Oblixn.cmd({
         : `${number}@s.whatsapp.net`;
       const reason = args.slice(1).join(" ") || "Tidak ada alasan";
 
-      await banUser(userId, reason, msg.sender);
-      await msg.reply(
-        `✅ Berhasil ban user ${normalizeJid(userId)}\nAlasan: ${reason}`
-      );
+      const result = await db.banUser(userId, reason, msg.sender);
+      if (result.success) {
+        await msg.reply(
+          `✅ Berhasil ban user ${normalizeJid(userId).split("@")[0]}\nAlasan: ${reason}`
+        );
+      } else {
+        await msg.reply(`❌ Gagal ban user: ${result.message}`);
+      }
     } catch (error) {
       botLogger.error("Error in ban command:", error);
       await msg.reply("❌ Gagal ban user: " + error.message);
@@ -282,17 +276,16 @@ global.Oblixn.cmd({
 
     try {
       let number = args[0].replace(/[^0-9]/g, "");
-      if (number.startsWith("0")) number = "62" + number.slice(1);
-      else if (!number.startsWith("62")) number = "62" + number;
+      const userId = number.startsWith("0")
+        ? `62${number.slice(1)}@s.whatsapp.net`
+        : `${number}@s.whatsapp.net`;
 
-      const userId = `${number}@s.whatsapp.net`;
-      const result = await unbanUser(userId);
-
-      if (result) {
-        await msg.reply(`✅ Berhasil unban user ${number}`);
+      const result = await db.unbanUser(userId);
+      if (result.success && result.wasUnbanned) {
+        await msg.reply(`✅ Berhasil unban user ${normalizeJid(userId).split("@")[0]}`);
       } else {
         await msg.reply(
-          `❌ User ${number} tidak ditemukan dalam daftar banned`
+          `❌ User ${normalizeJid(userId).split("@")[0]} tidak ditemukan dalam daftar banned`
         );
       }
     } catch (error) {
@@ -313,18 +306,20 @@ global.Oblixn.cmd({
     }
 
     try {
-      const bannedUsers = await getListBannedUsers();
-      if (!bannedUsers || bannedUsers.length === 0) {
+      const bannedUsersResult = await db.getListBannedUsers();
+      if (!bannedUsersResult.success || bannedUsersResult.data.length === 0) {
         return await msg.reply("📝 Tidak ada user yang dibanned saat ini");
       }
 
+      const bannedUsers = bannedUsersResult.data;
       let message = "*DAFTAR USER BANNED*\n\n";
       bannedUsers.forEach((user, index) => {
         message +=
-          `${index + 1}. Nomor: ${normalizeJid(user.user_id)}\n` +
+          `${index + 1}. Nomor: ${user.userId}\n` +
+          `   Username: ${user.username}\n` +
           `   Alasan: ${user.reason}\n` +
-          `   Dibanned oleh: ${normalizeJid(user.banned_by)}\n` +
-          `   Tanggal: ${new Date(user.banned_at).toLocaleString("id-ID")}\n\n`;
+          `   Dibanned oleh: ${normalizeJid(user.bannedBy)}\n` +
+          `   Tanggal: ${user.banDate}\n\n`;
       });
 
       await msg.reply(message);
@@ -354,7 +349,7 @@ global.Oblixn.cmd({
             "!restart - Restart bot",
             "!shutdown - Matikan bot",
             "!broadcast - Broadcast pesan ke semua grup",
-            "!bot on - Aktifkan bot", // Konsolidasi dengan bot
+            "!bot on - Aktifkan bot",
             "!bot off - Nonaktifkan bot",
           ],
         },
@@ -374,7 +369,7 @@ global.Oblixn.cmd({
 
       let helpMessage = `*👑 OWNER COMMANDS 👑*\n\n`;
       ownerCommands.forEach((category) => {
-        helpMessage += `*${category.category}:*\n`;
+        helpMessage += `${category.category}:\n`;
         category.commands.forEach((cmd) => (helpMessage += `• ${cmd}\n`));
         helpMessage += "\n";
       });
@@ -401,26 +396,14 @@ global.Oblixn.cmd({
 
     try {
       const action = args[0]?.toLowerCase();
-      const configPath = path.join(__dirname, "../json/bot.json");
-      let botConfig = {};
-
-      if (fs.existsSync(configPath)) {
-        botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-      } else {
-        botConfig = { bot: { status: global.botActive } };
-      }
 
       if (action === "on") {
-        botConfig.bot.status = true;
         global.botActive = true;
-        fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
         await msg.reply(
           "✅ Bot telah diaktifkan\n_Bot sekarang dapat digunakan oleh semua user_"
         );
       } else if (action === "off") {
-        botConfig.bot.status = false;
         global.botActive = false;
-        fs.writeFileSync(configPath, JSON.stringify(botConfig, null, 2));
         await msg.reply(
           "✅ Bot telah dinonaktifkan\n_Bot hanya akan merespon perintah owner_"
         );
@@ -431,6 +414,15 @@ global.Oblixn.cmd({
           }\nGunakan !bot on/off untuk mengubah`
         );
       }
+
+      // Simpan status ke database (opsional, jika ingin persisten)
+      const botInstances = await db.getBotInstances();
+      const mainBot = botInstances.find((bot) => bot.number === config.mainNumber);
+      if (mainBot) {
+        mainBot.status = global.botActive ? "active" : "inactive";
+        mainBot.updated_at = new Date().toISOString();
+        await db.writeDatabase({ bot_instances: botInstances });
+      }
     } catch (error) {
       botLogger.error("Error in bot command:", error);
       await msg.reply("❌ Gagal mengubah status bot: " + error.message);
@@ -438,19 +430,20 @@ global.Oblixn.cmd({
   },
 });
 
-// Inisialisasi status bot saat startup (tambahkan di initBot atau bagian awal bot.js)
+// Fungsi untuk memuat status bot saat startup
 async function loadBotStatus() {
-  const configPath = path.join(__dirname, "../json/bot.json");
-  if (fs.existsSync(configPath)) {
-    const botConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    global.botActive = botConfig.bot?.status ?? true; // Default true jika tidak ada
-  } else {
-    global.botActive = true; // Default aktif jika file tidak ada
+  try {
+    const botInstances = await db.getBotInstances();
+    const mainBot = botInstances.find((bot) => bot.number === config.mainNumber);
+    global.botActive = mainBot ? mainBot.status === "active" : true; // Default true jika tidak ada
+    botLogger.info(`Bot status loaded: ${global.botActive ? "On" : "Off"}`);
+  } catch (error) {
+    botLogger.error("Error loading bot status:", error);
+    global.botActive = true; // Default aktif jika gagal
   }
-  botLogger.info(`Bot status loaded: ${global.botActive ? "On" : "Off"}`);
 }
 
-// Panggil fungsi ini di initBot
+// Panggil fungsi ini di initBot di bot.js
 const initBot = async () => {
   await loadBotStatus();
 };

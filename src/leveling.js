@@ -1,32 +1,5 @@
-const fs = require('fs');
-const path = require('path');
-
-// Lokasi file untuk menyimpan data leveling secara sederhana (JSON)
-const LEVELING_DATA_FILE = path.join(__dirname, 'levelingData.json');
-
-// Gunakan Map untuk menampung data leveling selama runtime
-let levelingData = new Map();
-
-// Muat data leveling dari file jika tersedia
-if (fs.existsSync(LEVELING_DATA_FILE)) {
-  try {
-    const data = JSON.parse(fs.readFileSync(LEVELING_DATA_FILE, 'utf8'));
-    for (const userId in data) {
-      levelingData.set(userId, data[userId]);
-    }
-  } catch (error) {
-    console.error("Gagal memuat data leveling:", error);
-  }
-}
-
-// Fungsi untuk menyimpan data leveling ke file
-function saveLevelingData() {
-  const obj = {};
-  for (const [userId, data] of levelingData.entries()) {
-    obj[userId] = data;
-  }
-  fs.writeFileSync(LEVELING_DATA_FILE, JSON.stringify(obj, null, 2));
-}
+const db = require("../../database/confLowDb/lowdb"); // Impor database AJV dari lowdb.js
+const { botLogger } = require("../utils/logger");
 
 // Fungsi untuk menghitung XP yang dibutuhkan agar user naik level
 function getRequiredXP(level) {
@@ -34,37 +7,74 @@ function getRequiredXP(level) {
   return Math.floor(100 * Math.pow(1.5, level - 1));
 }
 
-// Fungsi untuk mendapatkan data user; jika belum ada, buat dengan nilai default
-function getUserData(userId) {
-  if (!levelingData.has(userId)) {
-    levelingData.set(userId, { level: 1, xp: 0 });
+// Fungsi untuk mendapatkan data user dari database; jika belum ada, buat dengan nilai default
+async function getUserData(userId) {
+  try {
+    let userData = await db.getUser(userId);
+    if (!userData) {
+      // Jika user belum ada, tambahkan dengan default
+      const result = await db.addUser({
+        user_id: userId,
+        username: null, // Nama akan diisi oleh bot jika tersedia
+        level: 1,
+        experience: 0,
+        total_messages: 0,
+      });
+      userData = result.data;
+      botLogger.info(`User ${userId} ditambahkan ke database untuk leveling`);
+    }
+    return userData;
+  } catch (error) {
+    botLogger.error(`Gagal mendapatkan data user ${userId}:`, error);
+    throw error;
   }
-  return levelingData.get(userId);
 }
 
 // Fungsi untuk menambah XP user dan menangani proses level up
-function addXP(userId, xpToAdd) {
-  const userData = getUserData(userId);
-  userData.xp += xpToAdd;
-  let requiredXP = getRequiredXP(userData.level);
+async function addXP(userId, xpToAdd) {
+  try {
+    const userData = await getUserData(userId);
+    userData.experience = (userData.experience || 0) + xpToAdd;
+    let requiredXP = getRequiredXP(userData.level);
 
-  // Jika XP cukup untuk naik level, lakukan iterasi level up berulang kali
-  while (userData.xp >= requiredXP) {
-    userData.xp -= requiredXP;
-    userData.level += 1;
-    requiredXP = getRequiredXP(userData.level);
-    console.log(`User ${userId} naik ke level ${userData.level}`);
-    // Di sini Anda bisa menambahkan notifikasi, misalnya mengirim pesan ke user
+    // Jika XP cukup untuk naik level, lakukan iterasi level up berulang kali
+    while (userData.experience >= requiredXP) {
+      userData.experience -= requiredXP;
+      userData.level += 1;
+      requiredXP = getRequiredXP(userData.level);
+      botLogger.info(`User ${userId} naik ke level ${userData.level}`);
+    }
+
+    // Perbarui data user di database
+    await db.updateUser(userId, {
+      experience: userData.experience,
+      level: userData.level,
+      updated_at: new Date().toISOString(),
+    });
+
+    return userData;
+  } catch (error) {
+    botLogger.error(`Gagal menambahkan XP untuk user ${userId}:`, error);
+    throw error;
   }
-
-  levelingData.set(userId, userData);
-  saveLevelingData();
-  return userData;
 }
 
-// Fungsi untuk mengambil data leveling (optional, untuk keperluan monitoring)
-function getLevelingData() {
-  return levelingData;
+// Fungsi untuk mengambil semua data leveling (optional, untuk monitoring)
+async function getLevelingData() {
+  try {
+    const users = await db.readDatabase().then((data) => data.users || []);
+    const levelingMap = new Map();
+    users.forEach((user) => {
+      levelingMap.set(user.user_id, {
+        level: user.level || 1,
+        xp: user.experience || 0,
+      });
+    });
+    return levelingMap;
+  } catch (error) {
+    botLogger.error("Gagal mengambil data leveling:", error);
+    throw error;
+  }
 }
 
 module.exports = {
@@ -72,4 +82,4 @@ module.exports = {
   getUserData,
   addXP,
   getLevelingData,
-}; 
+};

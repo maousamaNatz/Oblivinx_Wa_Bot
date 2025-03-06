@@ -12,7 +12,6 @@ const dbFile = path.join(dbFolder, "database.json");
 // Inisialisasi AJV dengan format tambahan
 const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
-
 // Fungsi untuk memastikan folder dan file database ada
 async function initializeDatabase() {
   try {
@@ -37,12 +36,10 @@ async function initializeDatabase() {
       };
       await fs.writeFile(dbFile, JSON.stringify(initialData, null, 2), "utf8");
       console.log(`Database initialized successfully at ${dbFile}`);
-    } else {
-      console.log(`Database already exists at ${dbFile}`);
     }
   } catch (error) {
     console.error("Error initializing database:", error.message, error.stack);
-    throw error; // Biarkan pemanggil menangani error
+    throw error;
   }
 }
 
@@ -52,11 +49,15 @@ async function readDatabase() {
     const data = await fs.readFile(dbFile, "utf8");
     return JSON.parse(data);
   } catch (error) {
+    if (error.code === "ENOENT") {
+      console.log(`Database file not found at ${dbFile}, initializing...`);
+      await initializeDatabase();
+      return await readDatabase(); // Coba baca setelah inisialisasi
+    }
     console.error("Error reading database:", error.message, error.stack);
     throw error;
   }
 }
-
 // Fungsi internal untuk menulis data ke file JSON
 async function writeDatabase(data) {
   try {
@@ -68,7 +69,6 @@ async function writeDatabase(data) {
     throw error;
   }
 }
-
 // Skema untuk validasi data user
 const userSchema = {
   type: "object",
@@ -746,7 +746,6 @@ async function handleQrCode(qrData, phoneNumber) {
 async function getBotInstances() {
   try {
     const data = await readDatabase();
-    console.log(`Fetching bot instances: ${JSON.stringify(data.bot_instances)}`);
     return data.bot_instances;
   } catch (error) {
     console.error("Error getting bot instances:", error.message, error.stack);
@@ -754,18 +753,17 @@ async function getBotInstances() {
   }
 }
 
-// Inisialisasi database saat modul dimuat
 initializeDatabase().catch((err) => {
   console.error("Failed to initialize database on module load:", err);
-  process.exit(1); // Hentikan proses jika inisialisasi gagal
+  process.exit(1);
 });
-
 // Export semua fungsi
 module.exports = {
   addUser,
   banUser,
   unbanUser,
   checkUserStatus,
+  initializeDatabase,
   blockUserBySystem,
   getListBannedUsers,
   addGroup,

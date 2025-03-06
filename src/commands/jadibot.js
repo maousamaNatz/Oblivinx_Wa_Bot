@@ -1,242 +1,73 @@
-const {
-  makeWASocket,
-  useMultiFileAuthState,
-} = require("@whiskeysockets/baileys");
-const {
-  getBotCredentials,
-  saveBotCredentials,
-  pool,
-} = require("../../config/dbConf/database");
+const { useMultiFileAuthState } = require("@whiskeysockets/baileys");
 const { promises: fs } = require("fs");
 const path = require("path");
-const { baileysLogger, color, botLogger } = require('../../src/utils/logger');
+const { botLogger } = require("../utils/logger");
+const db = require("../../database/confLowDb/lowdb");
 
-async function createSubBotSession(phoneNumber) {
-  const authFolder = path.join(
-    __dirname,
-    `../../auth_info_baileys/${phoneNumber}`
-  );
-
-  try {
-    // Cek apakah nomor sudah terdaftar
-    const [existing] = await pool.execute(
-      "SELECT number FROM bot_instances WHERE number = ?",
-      [phoneNumber]
-    );
-
-    if (existing.length > 0) {
-      return { success: false, message: "Nomor sudah terdaftar" };
-    }
-
-    // Periksa folder session dan buat jika belum ada
-    try {
-      await fs.access(authFolder);
-    } catch {
-      await fs.mkdir(authFolder, { recursive: true });
-    }
-
-    // Generate credentials menggunakan multi file auth state
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-
-    // Gunakan config yang sesuai dengan versi terbaru Baileys
-    const sock = makeWASocket({
-      printQRInTerminal: true,
-      auth: {
-        creds: state.creds,
-        keys: state.keys,
-        mobile: true,
-      },
-      browser: ["ORBIT-BOT", "Chrome", "3.0"],
-      markOnlineOnConnect: true,
-      version: [2, 2413, 1],
-    });
-
-    // Simpan credentials ke database sesuai struktur tabel
-    const credentials = JSON.stringify({
-      ...state.creds,
-      keys: state.keys,
-    });
-
-    await pool.execute(
-      "INSERT INTO bot_instances (number, credentials, status, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-      [phoneNumber, credentials, "active"]
-    );
-
-    return { success: true, message: "Session created" };
-  } catch (error) {
-    botLogger.error(`Jadibot Error [${phoneNumber}]:`, error);
-    try {
-      await fs.rm(authFolder, { recursive: true, force: true });
-    } catch (cleanupError) {
-      botLogger.error("Cleanup error:", cleanupError);
-    }
-    return {
-      success: false,
-      message: error.message.includes("Duplicate")
-        ? "Nomor sudah terdaftar"
-        : "Gagal membuat session",
-    };
-  }
-}
-
-Oblixn.cmd({
-  name: 'jadibot',
-  alias: ['otplogin', 'botregister'],
-  desc: 'Aktifkan bot kedua via OTP',
-  category: 'owner',
+// Command: jadibot
+global.Oblixn.cmd({
+  name: "jadibot",
+  alias: ["otplogin", "botregister"],
+  desc: "Aktifkan bot kedua via QR code",
+  category: "owner",
   async exec(msg, { args }) {
     try {
       // Cek izin owner
-      if (!permissionHandler.isOwner(msg.sender)) {
-        return msg.reply('❌ Hanya owner yang bisa menggunakan fitur ini');
+      if (!global.Oblixn.isOwner(msg.sender)) {
+        return await msg.reply("❌ Hanya owner yang bisa menggunakan fitur ini");
       }
 
-      const targetNumber = args[0] || '6282133839877';
-      
-      // Buat folder untuk menyimpan kredensial OTP jika belum ada
-      const authFolder = path.join(__dirname, `../../auth_info_baileys/${targetNumber}`);
-      try {
-        await fs.access(authFolder);
-      } catch {
-        await fs.mkdir(authFolder, { recursive: true });
+      if (!args[0]) {
+        return await msg.reply("Masukkan nomor telepon untuk bot anak!\nContoh: !jadibot 6281234567890");
       }
-      
-      // Membuat sock untuk OTP menggunakan konfigurasi minimal
-      const sock = makeWASocket({
-        auth: {
-          phoneNumber: targetNumber,
-        },
-        logger: baileysLogger,
-        printQRInTerminal: false
+
+      const targetNumber = args[0];
+      const normalizedNumber = targetNumber.startsWith("0")
+        ? "62" + targetNumber.slice(1)
+        : targetNumber;
+
+      // Cek apakah nomor sudah terdaftar
+      const botInstances = await db.getBotInstances();
+      const existingBot = botInstances.find((bot) => bot.number === normalizedNumber);
+      if (existingBot) {
+        return await msg.reply(`❌ Nomor ${normalizedNumber} sudah terdaftar sebagai bot anak!`);
+      }
+
+      // Buat folder untuk menyimpan kredensial bot anak
+      const authFolder = path.join(__dirname, `../../sessions/${normalizedNumber}`);
+      await fs.mkdir(authFolder, { recursive: true });
+
+      // Inisialisasi sesi baru untuk bot anak
+      const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+
+      // Tambahkan bot ke database terlebih dahulu dengan status "pending"
+      const credentials = JSON.stringify({
+        creds: state.creds,
+        keys: state.keys,
       });
-
-      // Minta OTP via SMS
-      const { code, timeout } = await sock.requestRegistrationCode({
-        phoneNumber: targetNumber,
-        method: 'sms'
-      });
-
-      await msg.reply(`📲 OTP dikirim ke *${targetNumber}*. Balas pesan ini dengan kode OTP yang diterima dalam 2 menit`);
-
-      // Handler untuk verifikasi OTP
-      Oblixn.otpHandlers[targetNumber] = async (otp) => {
-        try {
-          await sock.registerCode(otp, code);
-          
-          // Baca kredensial dari file (gunakan asinkron)
-          const credsPath = path.join(authFolder, 'creds.json');
-          const credsContent = await fs.readFile(credsPath, 'utf-8');
-          const credentials = JSON.parse(credsContent);
-          await saveBotCredentials(targetNumber, credentials);
-          
-          // Tambahkan bot anak dengan memanggil fungsi startChildBot
-          // Pastikan fungsi startChildBot menerima parameter: number, credentials, dan Oblixn (objek global)
-          await startChildBot(targetNumber, credentials, Oblixn);
-          
-          await msg.reply(`✅ Bot *${targetNumber}* berhasil diaktifkan!`);
-        } catch (error) {
-          console.error('OTP Error:', error);
-          await msg.reply(`❌ Gagal verifikasi OTP: ${error.message}`);
-        }
+      const newBot = {
+        id: db.getNewId(botInstances),
+        number: normalizedNumber,
+        credentials,
+        status: "pending", // Status sementara sampai QR discan
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       };
+      await db.writeDatabase({ bot_instances: [...botInstances, newBot] });
+      botLogger.info(`Bot anak ${normalizedNumber} ditambahkan ke database dengan status pending`);
 
-      // Timeout handler untuk OTP
-      setTimeout(() => {
-        delete Oblixn.otpHandlers[targetNumber];
-        msg.reply('⌛ Waktu verifikasi OTP habis');
-      }, 120000);
+      // Kirim pesan untuk meminta scan QR
+      await msg.reply(`📲 Bot anak *${normalizedNumber}* sedang disiapkan. Tunggu QR code untuk login.`);
 
+      // Panggil startChildBot yang ada di bot.js
+      await startChildBot(normalizedNumber, JSON.parse(credentials));
+
+      // Bot akan menangani QR melalui event di bot.js
     } catch (error) {
-      console.error('Jadibot Error:', error);
-      msg.reply(`❌ Gagal memproses: ${error.message}`);
+      botLogger.error("Jadibot Error:", error);
+      await msg.reply(`❌ Gagal memproses jadibot: ${error.message}`);
     }
-  }
+  },
 });
 
-async function startChildBot(number, credentials, Oblixn) {
-  try {
-    // Inisialisasi session bot anak.
-    // Jika Anda lebih memilih, Anda bisa menggunakan folder yang sama (misal: auth_info_baileys) atau folder lain (misal: sessions)
-    // Di sini kami menggunakan folder sessions untuk inisialisasi bot anak.
-    const sessionFolder = path.join(__dirname, `../../sessions/${number}`);
-    try {
-      await fs.access(sessionFolder);
-    } catch {
-      await fs.mkdir(sessionFolder, { recursive: true });
-    }
-
-    const { state, saveCreds } = await useMultiFileAuthState(
-      sessionFolder,
-      credentials
-    );
-
-    const bot = makeWASocket({
-      auth: state,
-      printQRInTerminal: false,
-      logger: Oblixn.logger,
-      mobile: true,
-    });
-
-    bot.ev.on("connection.update", (update) => {
-      if (update.connection === "open") {
-        console.log(color(`Bot ${number} connected!`, "cyan"));
-      }
-    });
-
-    bot.ev.on("messages.upsert", ({ messages }) => {
-      messages.forEach((m) => {
-        // Abaikan jika tidak ada pesan atau pesan dikirim oleh bot sendiri
-        if (!m.message || m.key.fromMe) return;
-
-        let text = "";
-        // Jika properti 'conversation' ada, gunakan itu
-        if (m.message.conversation) {
-          text = m.message.conversation;
-        }
-        // Jika pesan dalam grup menggunakan extendedTextMessage
-        else if (m.message.extendedTextMessage && m.message.extendedTextMessage.text) {
-          text = m.message.extendedTextMessage.text;
-        }
-
-        // Jika ada teks yang berhasil diambil, kirim respons
-        if (text) {
-          bot.sendMessage(m.key.remoteJid, {
-            text: `Bot anak menerima pesan: ${text}`,
-          });
-        }
-      });
-    });
-
-    bot.ev.on("creds.update", saveCreds);
-
-    global.childBots = global.childBots || new Map();
-    global.childBots.set(number, bot);
-    bot.Oblixn = Oblixn;
-  } catch (error) {
-    console.error("Gagal memulai bot anak:", error);
-    throw error;
-  }
-}
-
-async function initializeMainBot() {
-  try {
-    const { state, saveCreds } = await useMultiFileAuthState(
-      path.join(__dirname, '../../auth_info_baileys/main_bot')
-    );
-
-    const mainBot = makeWASocket({
-      printQRInTerminal: true,
-      auth: state,
-      logger: baileysLogger(),
-      mobile: true,
-    });
-
-    global.mainBot = mainBot;
-    mainBot.ev.on("creds.update", saveCreds);
-
-    return mainBot;
-  } catch (error) {
-    console.error("Gagal inisialisasi bot utama:", error);
-    process.exit(1);
-  }
-}
+// Fungsi startChildBot tetap ada di bot.js, jadi tidak perlu didefinisikan ulang di sini
