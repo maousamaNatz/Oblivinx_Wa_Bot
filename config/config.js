@@ -1,5 +1,5 @@
 const { makeInMemoryStore } = require("@whiskeysockets/baileys");
-const { botLogger , baileysLogger} = require('../src/utils/logger');
+const { botLogger, log, baileysLogger, logAlways } = require("../src/utils/logger");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
@@ -11,7 +11,7 @@ const { getAchievementById } = require("../database/confLowDb/lowdb");
 const loadGameData = (filename) => {
   try {
     const filePath = path.join(__dirname, "../src/json/games/", filename);
-    
+
     // Cek apakah file exists
     if (!fs.existsSync(filePath)) {
       console.warn(`Warning: Game file ${filename} tidak ditemukan`);
@@ -35,34 +35,33 @@ const SESSIONS_PATH = path.join(BASE_PATH, "sessions");
 const STORE_PATH = path.join(BASE_PATH, "store");
 
 // Inisialisasi store dengan error handling
-const store = makeInMemoryStore({ 
-  logger: baileysLogger.child({ level: 'debug', stream: 'store' })
+const store = makeInMemoryStore({
+  logger: baileysLogger.child({ level: "debug", stream: "store" }),
 });
 
 const initializeStore = async () => {
   try {
-    const baileysFile = path.join(__dirname, '../baileys_store.json');
-    
+    const baileysFile = path.join(__dirname, "../baileys_store.json");
+
     // Coba baca dari file
     if (fs.existsSync(baileysFile)) {
       await store.readFromFile(baileysFile);
-      botLogger.info('Store loaded from file');
+      botLogger.info("Store loaded from file");
     } else {
-      botLogger.info('Creating new store file');
+      botLogger.info("Creating new store file");
     }
-    
+
     // Set interval untuk auto-save
     setInterval(async () => {
       try {
         await store.writeToFile(baileysFile);
-        botLogger.debug('Store saved successfully');
+        botLogger.debug("Store saved successfully");
       } catch (error) {
-        botLogger.error('Gagal menyimpan store:', error);
+        botLogger.error("Gagal menyimpan store:", error);
       }
     }, 10000);
-    
   } catch (error) {
-    botLogger.error('❌ Failed to initialize store:', error);
+    botLogger.error("❌ Failed to initialize store:", error);
     process.exit(1);
   }
 };
@@ -74,21 +73,20 @@ initializeStore();
 const bindStoreToSocket = (sock) => {
   try {
     if (!sock?.ev) {
-      throw new Error('Socket tidak valid untuk binding store');
+      throw new Error("Socket tidak valid untuk binding store");
     }
-    
+
     store.bind(sock.ev);
-    sock.ev.on('creds.update', () => {
-      store.writeToFile(baileysFile).catch(error => {
-        botLogger.error('Gagal menyimpan store:', error);
+    sock.ev.on("creds.update", () => {
+      store.writeToFile(baileysFile).catch((error) => {
+        botLogger.error("Gagal menyimpan store:", error);
       });
     });
-    botLogger.info('Store berhasil di-bind ke socket');
-    
+    botLogger.info("Store berhasil di-bind ke socket");
   } catch (error) {
-    botLogger.error('Gagal binding store:', {
+    botLogger.error("Gagal binding store:", {
       error: error.message,
-      socketStatus: sock ? 'Socket exists' : 'Socket null'
+      socketStatus: sock ? "Socket exists" : "Socket null",
     });
   }
 };
@@ -166,15 +164,15 @@ const msgRetryCounterCache = new Map();
 const cacheConfig = {
   enabled: true,
   ttl: 300, // 5 menit
-  maxSize: 1000 // Maksimum item dalam cache
-}
+  maxSize: 1000, // Maksimum item dalam cache
+};
 
 // Tambahkan memory monitoring
 const memoryMonitor = {
   checkInterval: 60000, // Cek setiap 1 menit
   maxMemoryUsage: 0.8, // 80% dari total memory
-  gcThreshold: 0.7 // Jalankan GC pada 70% usage
-}
+  gcThreshold: 0.7, // Jalankan GC pada 70% usage
+};
 
 // Konfigurasi bot
 let config = {
@@ -291,11 +289,11 @@ let config = {
     },
   },
   folderdb: "../../database/Oblivinx_bot_Db_1",
-  dbjson:  "database.json",
+  dbjson: "database.json",
   groupjson: "group.json",
-  achievementjson: "achievement.json",   
-  leveljson: "level.json",   
-  
+  achievementjson: "achievement.json",
+  leveljson: "level.json",
+
   sessionCleanupInterval: 1800000, // 30 menit
   sessionMaxAge: 86400000, // 24 jam
   download: {
@@ -367,7 +365,7 @@ let config = {
 
 // Validasi nomor wajib
 if (!config.number) {
-  console.error('❌ ERROR: Nomor bot utama harus diisi di .env (PHONE_NUMBER)');
+  console.error("❌ ERROR: Nomor bot utama harus diisi di .env (PHONE_NUMBER)");
   process.exit(1);
 }
 
@@ -377,15 +375,13 @@ if (!config.number) {
     fs.mkdirSync(dir, { recursive: true });
   }
 });
-
+const asciiFilePath = path.join(__dirname, "/../database", "ascii.txt");
 // Gunakan logger setelah config sepenuhnya diinisialisasi
-if(botLogger) {
-  botLogger.info(`Loaded bot configuration:`, {
-    botName: config.botName,
-    owner: config.owner,
-    prefix: config.prefix,
-    sessionName: config.sessionName
-  });
+if (botLogger) {
+  log(
+    `Loaded bot configuration: botName=${config.botName}, owner=${config.owner}, prefix=${config.prefix}, sessionName=${config.sessionName}`,
+    "info"
+  );
 }
 
 // Tambahkan fungsi cleanup di bot.js
@@ -429,20 +425,19 @@ const BAN_TYPES = {
   CALL: "CALL_BAN", // Ban karena telepon (dengan blokir)
   MANUAL: "MANUAL_BAN", // Ban manual oleh owner (tanpa blokir)
 };
-
-// ====== LOGGER ======
-const log = (type, message) => {
-  const now = new Date().toLocaleString();
-  console.log(`[${now}] [${type}] ${message}`);
-};
-
 // Jalankan cleanup secara berkala
 setInterval(cleanupSessions, config.sessionCleanupInterval);
 
 // Konfigurasi reconnect
-const RECONNECT_INTERVAL = process.env.RECONNECT_INTERVAL ? parseInt(process.env.RECONNECT_INTERVAL) : 10000; // 10 detik default
-const MAX_RECONNECT_RETRIES = process.env.MAX_RECONNECT_RETRIES ? parseInt(process.env.MAX_RECONNECT_RETRIES) : 5;
-const CONNECTION_TIMEOUT = process.env.CONNECTION_TIMEOUT ? parseInt(process.env.CONNECTION_TIMEOUT) : 60000; // 60 detik default
+const RECONNECT_INTERVAL = process.env.RECONNECT_INTERVAL
+  ? parseInt(process.env.RECONNECT_INTERVAL)
+  : 10000; // 10 detik default
+const MAX_RECONNECT_RETRIES = process.env.MAX_RECONNECT_RETRIES
+  ? parseInt(process.env.MAX_RECONNECT_RETRIES)
+  : 5;
+const CONNECTION_TIMEOUT = process.env.CONNECTION_TIMEOUT
+  ? parseInt(process.env.CONNECTION_TIMEOUT)
+  : 60000; // 60 detik default
 
 // Buat cache grup manual
 const groupCache = new Map();

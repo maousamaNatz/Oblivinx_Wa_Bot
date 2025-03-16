@@ -61,7 +61,6 @@ global.Oblixn.cmd({
           hasExec: !!val.exec,
         })
       );
-      botLogger.info("Isi global.Oblixn.commands:", allCommands);
 
       for (const [key, cmd] of global.Oblixn.commands) {
         if (!cmd) {

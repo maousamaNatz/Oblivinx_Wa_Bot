@@ -13,6 +13,9 @@ const {
   botLogger,
   baileysLogger,
   getDebugStatus,
+  logAlways,
+  logToFile,
+  logStartup
 } = require("./src/utils/logger");
 const {
   config,
@@ -35,6 +38,9 @@ const db = require("./database/confLowDb/lowdb");
 const { handleGroupMessage } = require("./src/handler/groupHandler");
 const crypto = require("crypto");
 const {log} = require('./src/utils/logger');
+const os = require("os");
+const { messageQueue } = require('./src/utils/messageQueue');
+const messageHandlers = require('./src/utils/messageHandlers');
 process.env.PREFIX = process.env.PREFIX?.trim() || "!";
 
 const id = fs.readFileSync("./src/i18n/langId.json", "utf8");
@@ -42,25 +48,98 @@ const en = fs.readFileSync("./src/i18n/langEn.json", "utf8");
 // Define the path to the ASCII file
 const asciiFilePath = path.join(__dirname, 'database', 'ascii.txt');
 
-// Function to read the ASCII file
+// Function to read the ASCII file and display bot introduction
 function readAsciiFile() {
-    fs.readFile(asciiFilePath, 'utf8', (err, data) => {
-        if (err) {
-            log('Error reading the file:', 'error');
-            return;
-        }
-        log(data , 'infoowner');
+  try {
+    // Read ASCII art banner from file
+    const banner = fs.existsSync(asciiFilePath) 
+      ? fs.readFileSync(asciiFilePath, 'utf8')
+      : "=== Oblivinx Bot ===";
+    
+    // Always show the banner and bot info regardless of logging status
+    // Both on console and in log files
+    logAlways(banner, 'info');
+    logToFile(banner, 'info');
+    
+    const botInfo = [
+      'Hello everyone! Im Oblivinx Bot',
+      'Welcome to Oblivinx bot! Please enjoy the services available.',
+      'If you encounter any bugs, please do not hesitate to reach out to the contacts listed.',
+      'You can also contribute to the development of this bot by forking our repository on GitHub and submitting a pull request.',
+      'Thank you for using Oblivinx bot, hope it helps! 🚀',
+      '=========================== Contact Developer ============================',
+      `Name: ${process.env.OWNER1_NAME || 'Natz'}`,
+      `Phone: ${process.env.OWNER_NUMBER_ONE || '081910058235'}`,
+      `Email: ${process.env.OWNER1_EMAIL || 'riobelly@gmail.com'}`,
+      `GitHub: ${process.env.OWNER1_GITHUB || 'https://github.com/RioBelly'}`,
+      'Instagram: patch.cpp',
+      '=========================================================================='
+    ];
+    
+    // Log each line of info to both console and file
+    botInfo.forEach(line => {
+      logAlways(line, 'info');
+      logToFile(line, 'info');
     });
+    
+  } catch (error) {
+    botLogger.error('Error reading ASCII file: ' + error.message);
+  }
+}
 
-    log( 'Hello everyone Im Natz', 'infoowner');
-    log( 'welcome to Oblivinx bot! Please enjoy the services available. ', 'infoowner');
-    log( 'If you encounter any bugs, please do not hesitate to reach out to the contacts listed. ', 'infoowner');
-    log( 'You can also contribute to the development of this bot by forking our repository on GitHub and submitting a pull request.', 'infoowner');
-    log( 'Thank you for using Oblivinx bot, hope it helps! 🚀', 'infoowner');
-    log( 'Contact Developer:', 'infoowner');
-    log( 'Natz: 081910058235', 'infoowner');
-    log( 'Instagram: patch.cpp', 'infoowner');
-    log( 'Hello everyone Im Natz', 'infoowner');
+// Function untuk menampilkan banner startup di terminal
+function displayStartupBanner() {
+  try {
+    // Baca ASCII art banner dari file
+    const banner = fs.existsSync(asciiFilePath) 
+      ? fs.readFileSync(asciiFilePath, 'utf8')
+      : "=== Oblivinx Bot ===";
+    
+    // Tampilkan banner dengan warna khusus
+    console.log('\n'); // Tambahkan baris kosong untuk kejelasan
+    logStartup(banner, 'info');
+    
+    // Tambahkan garis pembatas
+    const separator = '='.repeat(70);
+    logStartup(separator, 'info');
+    
+    // Tampilkan informasi pengembang bot
+    logStartup('👨‍💻 DEVELOPER INFO', 'info');
+    logStartup(`Name    : ${process.env.OWNER1_NAME || 'Natz'}`, 'info');
+    logStartup(`Phone   : ${process.env.OWNER_NUMBER_ONE || '081910058235'}`, 'info');
+    logStartup(`Email   : ${process.env.OWNER1_EMAIL || 'riobelly@gmail.com'}`, 'info');
+    logStartup(`GitHub  : ${process.env.OWNER1_GITHUB || 'https://github.com/RioBelly'}`, 'info');
+    logStartup(`Instagram: patch.cpp`, 'info');
+    
+    // Tampilkan informasi sistem
+    logStartup(separator, 'info');
+    logStartup('🖥️ SYSTEM INFO', 'info');
+    
+    const cpuModel = os.cpus()[0].model;
+    const platform = os.platform();
+    const memTotal = formatBytes(os.totalmem());
+    const hostname = os.hostname();
+    
+    logStartup(`System  : ${platform} (${os.release()})`, 'info');
+    logStartup(`Hostname: ${hostname}`, 'info');
+    logStartup(`CPU     : ${cpuModel}`, 'info');
+    logStartup(`Memory  : ${memTotal}`, 'info');
+    logStartup(`WorkDir : ${process.cwd()}`, 'info');
+    
+    // Tampilkan informasi konfigurasi bot
+    logStartup(separator, 'info');
+    logStartup('🤖 BOT CONFIGURATION', 'info');
+    logStartup(`Name    : ${config.botName}`, 'info');
+    logStartup(`Prefix  : ${config.prefix}`, 'info');
+    logStartup(`Debug   : ${process.env.DEBUG_MODE === 'true' ? 'Enabled' : 'Disabled'}`, 'info');
+    logStartup(`Logging : ${process.env.LOGGING_ENABLED !== 'false' ? 'Enabled' : 'Disabled (errors only)'}`, 'info');
+    
+    logStartup(separator, 'info');
+    logStartup('📡 INITIALIZING BOT SERVICES...', 'info');
+    console.log('\n'); // Tambahkan baris kosong untuk kejelasan
+  } catch (error) {
+    botLogger.error('Error displaying startup banner: ' + error.message);
+  }
 }
 
 // Fungsi pembantu untuk membungkus operasi dengan timeout
@@ -546,61 +625,18 @@ const initBot = async () => {
               !!enhancedMsg.sock
             );
 
-            if (isGroup) {
-              if (messageText.startsWith(PREFIX)) {
-                const parsedCommand = commandHandler(messageText);
-                if (parsedCommand) {
-                  const { command, args } = parsedCommand;
-                  botLogger.info(`Memproses command di grup: ${command}`);
-                  try {
-                    await executeCommand(
-                      effectiveSock,
-                      enhancedMsg,
-                      sender,
-                      command,
-                      args
-                    );
-                  } catch (error) {
-                    botLogger.error(
-                      `Error executing command ${command}: ${error.message}`
-                    );
-                    await enhancedMsg.reply(
-                      "Terjadi kesalahan saat memproses perintah."
-                    );
-                  }
-                  return;
-                }
-              } else if (msg.key.participant && msg.messageStubType) {
-                botLogger.info(
-                  `Memproses event grup: ${messageText || "event"}`
-                );
-                await handleGroupMessage(effectiveSock, enhancedMsg);
-                return;
-              } else {
-                botLogger.info(`Mengabaikan pesan grup biasa: ${messageText}`);
-                return;
-              }
-            }
+            // Masukkan pesan ke dalam antrian
+            const messageId = messageQueue.enqueue(enhancedMsg, {
+              isCommand: messageText.startsWith(PREFIX),
+              isFromGroup: isGroup,
+              isPremium: false, // Tentukan apakah user premium atau tidak
+              timestamp: Date.now()
+            });
 
-            if (messageText.startsWith(PREFIX)) {
-              const parsedCommand = commandHandler(messageText);
-              if (parsedCommand) {
-                const { command, args } = parsedCommand;
-                botLogger.info(`Memproses command di chat pribadi: ${command}`);
-                await executeCommand(
-                  effectiveSock,
-                  enhancedMsg,
-                  sender,
-                  command,
-                  args
-                );
-              } else {
-                botLogger.info(`Pesan pribadi bukan command: ${messageText}`);
-              }
+            if (messageId) {
+              botLogger.debug(`Message queued with ID: ${messageId}`);
             } else {
-              botLogger.info(
-                `Mengabaikan pesan pribadi tanpa PREFIX: ${messageText}`
-              );
+              botLogger.warn(`Failed to queue message from ${participant}`);
             }
           } catch (error) {
             botLogger.error("Error processing message:", error);
@@ -806,289 +842,181 @@ async function initializeAllBots() {
   try {
     await db.initializeDatabase(); // Pastikan database diinisialisasi
     const bots = await db.getBotInstances();
+    
+    if (!bots || !Array.isArray(bots)) {
+      botLogger.warn("No bots found or bot data is invalid");
+      return;
+    }
+    
     const activeBots = bots.filter((bot) => bot.status === "active");
+    
+    if (activeBots.length === 0) {
+      botLogger.info("No active bots to initialize");
+      return;
+    }
+    
+    botLogger.info(`Found ${activeBots.length} active bots to initialize`);
+    
     for (const bot of activeBots) {
       try {
-        await startChildBot(bot.number, JSON.parse(bot.credentials));
-        botLogger.info(`Bot ${bot.number} berhasil diinisialisasi`);
+        if (!bot.number) {
+          botLogger.warn("Bot without number found, skipping");
+          continue;
+        }
+        
+        if (!bot.credentials) {
+          botLogger.warn(`Bot ${bot.number} has no credentials, initializing with empty state`);
+          await startChildBot(bot.number, null);
+        } else {
+          try {
+            const credentials = JSON.parse(bot.credentials);
+            await startChildBot(bot.number, credentials);
+            botLogger.info(`Bot ${bot.number} berhasil diinisialisasi`);
+          } catch (parseError) {
+            botLogger.error(`Invalid credentials format for bot ${bot.number}: ${parseError.message}`);
+            await startChildBot(bot.number, null);
+          }
+        }
       } catch (error) {
-        botLogger.error(`Gagal inisialisasi bot ${bot.number}:`, error);
+        botLogger.error(`Gagal inisialisasi bot ${bot.number}: ${error.message}`);
+        // Lanjutkan ke bot berikutnya
       }
     }
   } catch (error) {
-    botLogger.error("Error initializing bots:", error);
+    botLogger.error("Error initializing bots: " + error.message);
+    // Tidak throw error, untuk menghindari crash aplikasi
   }
 }
 
-initializeAllBots();
-
-(async () => {
-  botLogger.info("Starting bot...");
-  setupGlobalErrorHandlers();
-  readAsciiFile();
-  loadCommands(path.join(__dirname, "src/commands"));
-  try {
-    await db.initializeDatabase(); // Pastikan database diinisialisasi sebelum operasi lain
-    await initializeAllBots(); // Panggil setelah initBot
-    await initBot();
-    await startChildBots(); // Panggil setelah initBot
-  } catch (error) {
-    botLogger.error(`Failed to start bot: ${error.message}`);
-    process.exit(1);
-  }
-})();
-
-process.on("uncaughtException", (err) => {
-  if (botLogger) botLogger.error("Uncaught Exception: " + err);
-  else console.error("Fallback error logging:", err);
-  process.exit(1);
-});
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
-});
-
-process.on("uncaughtException", (error) => {
-  console.error("Uncaught Exception:", error);
-  cleanupAndExit(1);
-});
-
-async function cleanupAndExit(code = 0) {
-  botLogger.info("🛑 Cleaning up before exit...");
-  try {
-    await store.close();
-    for (const [number, sock] of global.childBots) {
-      await sock.end();
-    }
-  } catch (cleanupError) {
-    botLogger.error("Cleanup error:", cleanupError);
-  }
-  process.exit(code);
-}
-
-async function checkBanStatus(userId) {
-  try {
-    const status = await db.checkUserStatus(userId);
-    botLogger.info(`Memeriksa status ban untuk user: ${userId}`);
-    let banInfo = null;
-    if (status.isBanned) {
-      banInfo = {
-        reason: status.banReason || "Diblokir oleh admin",
-        banned_at: status.created_at || new Date().toISOString(),
-      };
-    }
-    return { isBanned: status.isBanned, banInfo };
-  } catch (error) {
-    botLogger.error("Error memeriksa status ban:", error);
-    return { isBanned: false, banInfo: null };
-  }
-}
-
-process.on("SIGINT", async () => {
-  botLogger.info("Menerima signal SIGINT, membersihkan...");
-  if (activeSocket?.ws) {
-    activeSocket.ws.close();
-    activeSocket.ev.removeAllListeners();
-  }
-  process.exit(0);
-});
-
+// Implementasi untuk startChildBot yang digunakan di initializeAllBots
 async function startChildBot(phoneNumber, credentials) {
   try {
-    const validateCredentials = (creds) => {
-      return (
-        creds?.me?.id &&
-        creds?.noiseKey?.length === 32 &&
-        creds?.signedIdentityKey?.length === 32
-      );
-    };
-
-    if (!validateCredentials(credentials)) {
-      console.warn(`⚠️ Regenerasi credentials untuk ${phoneNumber}`);
-      const { state } = await useMultiFileAuthState(
-        path.join(__dirname, `sessions/${phoneNumber}`)
-      );
-      try {
-        const bots = await db.getBotInstances();
-        const exists = bots.find((bot) => bot.number === phoneNumber);
-        if (exists) {
-          exists.credentials = JSON.stringify(state);
-          exists.updated_at = new Date().toISOString();
-          await db.writeDatabase({ bot_instances: bots });
-        } else {
-          bots.push({
-            id: db.getNewId(bots),
-            number: phoneNumber,
-            credentials: JSON.stringify(state),
-            status: "active",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-          await db.writeDatabase({ bot_instances: bots });
-        }
-        console.log(`✅ Berhasil update credentials ${phoneNumber}`);
-        credentials = state;
-      } catch (dbError) {
-        console.error("Gagal update database:", dbError);
-        throw new Error("Gagal update credentials di database");
+    if (!credentials || !credentials.creds) {
+      botLogger.warn(`No valid credentials for ${phoneNumber}, initializing empty state`);
+      const authFolder = path.join(__dirname, `sessions/${phoneNumber}`);
+      if (!fs.existsSync(authFolder)) {
+        fs.mkdirSync(authFolder, { recursive: true });
       }
+      const { state } = await useMultiFileAuthState(authFolder);
+      credentials = state;
     }
-
-    const childSock = makeWASocket({
-      auth: { ...credentials, mobile: true },
-      browser: ["FORCE-CONNECT", "Chrome", "3.0"],
-      version: [3, 3234, 9],
+    
+    const childSocket = makeWASocket({
+      auth: credentials,
+      printQRInTerminal: true,
       logger: baileysLogger,
-      connectTimeoutMs: 60000,
-      shouldIgnoreJid: () => false,
-      generateHighQualityLinkPreview: true,
-      getMessage: async () => null,
-      keepAliveIntervalMs: 7200000,
+      browser: ["Oblivinx Child Bot", "Chrome", "1.0.0"],
+      connectTimeoutMs: CONNECTION_TIMEOUT,
+      keepAliveIntervalMs: 15000,
     });
-
-    childSock.ev.on("connection.update", (update) => {
+    
+    // Set up basic event handlers
+    childSocket.ev.on("connection.update", (update) => {
       const { connection, lastDisconnect, qr } = update;
-      if (qr && !childSock.user) {
-        console.log("⚠️ QR Code diperlukan untuk", phoneNumber);
-        db.handleQrCode(qr, phoneNumber).catch(console.error);
+      
+      if (qr) {
+        botLogger.info(`QR Code available for ${phoneNumber}, scan to login`);
+        // Simpan QR Code jika diperlukan
+        if (db.handleQrCode) {
+          db.handleQrCode(qr, phoneNumber).catch(err => 
+            botLogger.error(`Error handling QR code for ${phoneNumber}: ${err.message}`)
+          );
+        }
       }
+      
       if (connection === "close") {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
-        if (statusCode === 401 || statusCode === 403 || statusCode === 404) {
-          fs.rmSync(path.join(__dirname, `sessions/${phoneNumber}`), {
-            recursive: true,
-            force: true,
-          });
-          console.log("⚠️ Session dihapus karena error auth");
-          db.getBotInstances().then((bots) => {
-            const bot = bots.find((b) => b.number === phoneNumber);
-            if (bot) {
-              bot.status = "inactive";
-              db.writeDatabase({ bot_instances: bots });
-            }
-          });
-        }
-      }
-      if (connection === "open") {
+        botLogger.info(`Child bot ${phoneNumber} connection closed with status: ${statusCode}`);
+      } else if (connection === "open") {
+        botLogger.info(`Child bot ${phoneNumber} connected successfully`);
+        
+        // Update status bot di database jika perlu
         db.getBotInstances().then(async (bots) => {
           const bot = bots.find((b) => b.number === phoneNumber);
           if (bot) {
             bot.status = "active";
             bot.updated_at = new Date().toISOString();
-            await db.writeDatabase({ bot_instances: bots });
-            botLogger.info(`Bot ${phoneNumber} status updated to active`);
+            await db.writeDatabase({ bot_instances: bots }).catch(err => 
+              botLogger.error(`Error updating bot status: ${err.message}`)
+            );
           }
-        });
+        }).catch(err => botLogger.error(`Error getting bot instances: ${err.message}`));
       }
     });
-
-    return childSock;
+    
+    // Handle credential updates
+    const saveCreds = async () => {
+      const authFolder = path.join(__dirname, `sessions/${phoneNumber}`);
+      const { state } = await useMultiFileAuthState(authFolder);
+      
+      // Update credentials di database jika perlu
+      db.getBotInstances().then(async (bots) => {
+        const bot = bots.find((b) => b.number === phoneNumber);
+        if (bot) {
+          bot.credentials = JSON.stringify(state);
+          bot.updated_at = new Date().toISOString();
+          await db.writeDatabase({ bot_instances: bots }).catch(err => 
+            botLogger.error(`Error updating bot credentials: ${err.message}`)
+          );
+        }
+      }).catch(err => botLogger.error(`Error getting bot instances: ${err.message}`));
+    };
+    
+    childSocket.ev.on("creds.update", saveCreds);
+    
+    // Store in global map if not exists
+    if (!global.childBots) {
+      global.childBots = new Map();
+    }
+    
+    global.childBots.set(phoneNumber, childSocket);
+    return childSocket;
   } catch (error) {
-    console.error(`🚨 Gagal mutlak untuk ${phoneNumber}:`, error);
-    db.getBotInstances().then((bots) => {
-      const bot = bots.find((b) => b.number === phoneNumber);
-      if (bot) {
-        bot.status = "inactive";
-        db.writeDatabase({ bot_instances: bots });
-      }
-    });
-    throw new Error(`Di nonaktifkan otomatis: ${error.message}`);
+    botLogger.error(`Error starting child bot ${phoneNumber}: ${error.message}`);
+    throw error; // Re-throw to be handled by caller
   }
 }
 
-process.on("SIGINT", async () => {
-  console.log("\n🛑 Cleaning up child bots...");
-  for (const [number, sock] of global.childBots) {
-    await sock.end();
-  }
-  store.close();
-  process.exit(0);
-});
-
+// Implementasi fungsi startChildBots yang dipanggil di IIFE
 async function startChildBots() {
   try {
-    await db.initializeDatabase(); // Pastikan database diinisialisasi
+    // Pastikan database diinisialisasi
+    await db.initializeDatabase();
+    
+    // Ambil daftar bot dari database
     const bots = await db.getBotInstances();
-    const rows = bots.filter((bot) => bot.status === "active");
-    for (const row of rows) {
-      if (row.number !== config.mainNumber) {
-        await initializeBot(row.number);
-      }
-    }
-  } catch (error) {
-    console.error("Error starting child bots:", error);
-  }
-}
-
-startChildBots();
-
-if (!global.childBots) {
-  global.childBots = new Map();
-}
-
-async function initializeBot(phoneNumber) {
-  let sock = null;
-  try {
-    const authFolder = path.join(__dirname, `sessions/${phoneNumber}`);
-    if (fs.existsSync(authFolder)) {
-      const sessionFiles = fs.readdirSync(authFolder);
-      if (sessionFiles.length === 0) {
-        fs.rmSync(authFolder, { recursive: true, force: true });
-        botLogger.info(`🗑 Session kosong dihapus untuk ${phoneNumber}`);
-      }
-    }
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-    sock = makeWASocket({
-      auth: { creds: state.creds, keys: state.keys },
-      logger: baileysLogger,
-      msgRetryCounterCache,
-      getMessage: async (key) => {
-        const message = await store.loadMessage(key.remoteJid, key.id);
-        return message || {};
-      },
-      connectTimeoutMs: 30000,
-      keepAliveIntervalMs: 15000,
-      autoReconnect: true,
-      connectionOptions: { timeout: 30000, keepAlive: true },
-    });
-    const setupEventHandlers = () => {
-      sock.ev.on("connection.update", (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === "close") {
-          console.log(`🔌 Koneksi ${phoneNumber} terputus:`, lastDisconnect.error);
-        } else if (connection === "open") {
-          console.log(`✅ Koneksi ${phoneNumber} stabil`);
+    
+    // Filter bot yang aktif dan bukan bot utama
+    const activeChildBots = bots.filter(bot => 
+      bot.status === "active" && bot.number !== config.number
+    );
+    
+    if (activeChildBots.length > 0) {
+      logStartup(`Initializing ${activeChildBots.length} child bots...`, 'info');
+      
+      // Inisialisasi setiap bot anak secara berurutan
+      for (const bot of activeChildBots) {
+        try {
+          const childSocket = await startChildBot(
+            bot.number, 
+            bot.credentials ? JSON.parse(bot.credentials) : null
+          );
+          
+          logStartup(`Child bot ${bot.number} initialized successfully`, 'info');
+        } catch (error) {
+          botLogger.error(`Failed to initialize child bot ${bot.number}: ${error.message}`);
         }
-      });
-      sock.ev.on("creds.update", saveCreds);
-    };
-    setupEventHandlers();
-    global.childBots.set(phoneNumber, sock);
-    botLogger.info(`🤖 Bot ${phoneNumber} berhasil diinisialisasi`);
-    return sock;
-  } catch (error) {
-    botLogger.error(`❌ Gagal inisialisasi bot ${phoneNumber}:`, error);
-    if (sock !== null) {
-      sock.ev.removeAllListeners();
-      sock.ws.close();
+      }
+    } else {
+      logStartup('No active child bots to initialize', 'info');
     }
-    fs.rmSync(path.join(__dirname, `sessions/${phoneNumber}`), {
-      recursive: true,
-      force: true,
-    });
-    throw error;
+  } catch (error) {
+    botLogger.error(`Error starting child bots: ${error.message}`);
+    throw error; // Re-throw to be handled by caller
   }
 }
 
-process.on("exit", () => {
-  console.log("Membersihkan koneksi...");
-  global.childBots.forEach((sock, number) => {
-    sock.ev.removeAllListeners();
-    sock.ws.close();
-  });
-  global.childBots.clear();
-});
-
+// Fungsi untuk mengurai teks pesan menjadi command dan argumen
 const commandHandler = (text) => {
   const pattern = /^[!\/\.](\w+)(?:\s+(.*))?$/i;
   const match = text.match(pattern);
@@ -1102,3 +1030,69 @@ const commandHandler = (text) => {
   return null;
 };
 
+// Tambahkan fungsi untuk menginisialisasi message queue di bagian akhir IIFE
+(async () => {
+  botLogger.info("Starting bot...");
+  setupGlobalErrorHandlers();
+  
+  // Tampilkan banner startup di awal
+  displayStartupBanner();
+  
+  loadCommands(path.join(__dirname, "src/commands"));
+  try {
+    // Inisialisasi database terlebih dahulu
+    await db.initializeDatabase();
+    
+    // Inisialisasi bot utama
+    const mainBot = await initBot();
+    if (!mainBot) {
+      throw new Error("Failed to initialize main bot");
+    }
+    
+    // Inisialisasi message queue handlers
+    initializeMessageQueue();
+    
+    // Setelah bot utama berhasil diinisialisasi, coba inisialisasi bot anak
+    try {
+      await startChildBots();
+    } catch (childBotsError) {
+      // Lanjutkan meski ada error dengan bot anak
+      botLogger.error(`Error with child bots: ${childBotsError.message}`);
+      logStartup('Continuing with main bot only...', 'warn');
+    }
+    
+    // Tampilkan pesan bahwa bot siap digunakan
+    console.log('\n'); // Tambahkan baris kosong untuk kejelasan
+    logStartup('=====================================================', 'info');
+    logStartup('✅ BOT IS NOW ONLINE AND READY!', 'info');
+    logStartup('=====================================================', 'info');
+    
+    // Tampilkan cara menggunakan bot
+    logStartup(`Use "${config.prefix}help" or "${config.prefix}menu" to see available commands`, 'info');
+    logStartup(`Use "${config.prefix}botinfo" to see bot information`, 'info');
+    console.log('\n'); // Tambahkan baris kosong untuk kejelasan
+  } catch (error) {
+    botLogger.error(`Failed to start bot: ${error.message}`);
+    process.exit(1);
+  }
+})();
+
+/**
+ * Inisialisasi sistem antrian pesan dan mendaftarkan handler
+ */
+function initializeMessageQueue() {
+  // Set up command handlers
+  messageHandlers.setupCommandHandlers(commandHandler, executeCommand);
+  
+  // Register message handlers untuk berbagai tipe pesan
+  messageQueue.registerHandler('text', (msg, metadata) => messageHandlers.handleTextMessage(msg, metadata));
+  messageQueue.registerHandler('image', (msg, metadata) => messageHandlers.handleImageMessage(msg, metadata));
+  messageQueue.registerHandler('sticker', (msg, metadata) => messageHandlers.handleStickerMessage(msg, metadata));
+  
+  // Register default handler untuk semua tipe pesan lainnya
+  messageQueue.setDefaultHandler((msg, metadata) => messageHandlers.handleDefaultMessage(msg, metadata));
+  
+  // Log status antrian dimulai
+  botLogger.info(`Message queue system initialized with capacity for ${messageQueue.maxQueueSize.toLocaleString()} messages`);
+  botLogger.info(`Processing up to ${messageQueue.maxConcurrentProcessing} messages concurrently`);
+} 

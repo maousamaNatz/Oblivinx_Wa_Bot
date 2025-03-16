@@ -5,19 +5,26 @@ const ff = require("fluent-ffmpeg");
 const webp = require("node-webpmux");
 const path = require("path");
 const ffmpegPath = require("@ffmpeg-installer/ffmpeg").path;
+
 ff.setFfmpegPath(ffmpegPath);
 
+// Fungsi untuk menghasilkan nama acak jika tidak ada nama kustom
 function generateRandomName(ext) {
   return `${Crypto.randomBytes(10).toString("hex")}${ext}`;
 }
 
-async function imageToWebp(image) {
-  const tempFile = path.join(tmpdir(), generateRandomName(".webp"));
-  const tempInput = path.join(tmpdir(), generateRandomName(".jpg"));
-  
+// Fungsi imageToWebp dengan log dan error handling
+async function imageToWebp(image, customName = null) {
+  const fileName = customName ? `${customName}.webp` : generateRandomName(".webp");
+  const tempFile = path.join(tmpdir(), fileName);
+  const tempInput = path.join(tmpdir(), customName ? `${customName}.jpg` : generateRandomName(".jpg"));
+
+  console.log(`[imageToWebp] Input file: ${tempInput}, Output file: ${tempFile}`);
+
   try {
     fs.writeFileSync(tempInput, image);
-    
+    console.log(`[imageToWebp] Input file written, size: ${image.length}`);
+
     await new Promise((resolve, reject) => {
       ff(tempInput)
         .outputOptions([
@@ -26,15 +33,24 @@ async function imageToWebp(image) {
         ])
         .toFormat("webp")
         .save(tempFile)
-        .on("end", () => resolve())
-        .on("error", reject);
+        .on("end", () => {
+          console.log(`[imageToWebp] Conversion completed`);
+          resolve();
+        })
+        .on("error", (err) => {
+          console.error(`[imageToWebp] FFmpeg error: ${err.message}`);
+          reject(err);
+        });
     });
 
     const buffer = fs.readFileSync(tempFile);
+    console.log(`[imageToWebp] Output buffer size: ${buffer.length}`);
+
     fs.unlinkSync(tempFile);
     fs.unlinkSync(tempInput);
     return buffer;
   } catch (error) {
+    console.error(`[imageToWebp] Error: ${error.message}`);
     try {
       fs.unlinkSync(tempFile);
       fs.unlinkSync(tempInput);
@@ -43,13 +59,18 @@ async function imageToWebp(image) {
   }
 }
 
-async function videoToWebp(video) {
-  const tempFile = path.join(tmpdir(), generateRandomName(".webp"));
-  const tempInput = path.join(tmpdir(), generateRandomName(".mp4"));
-  
+// Fungsi videoToWebp dengan log dan error handling
+async function videoToWebp(video, customName = null) {
+  const fileName = customName ? `${customName}.webp` : generateRandomName(".webp");
+  const tempFile = path.join(tmpdir(), fileName);
+  const tempInput = path.join(tmpdir(), customName ? `${customName}.mp4` : generateRandomName(".mp4"));
+
+  console.log(`[videoToWebp] Input file: ${tempInput}, Output file: ${tempFile}`);
+
   try {
     fs.writeFileSync(tempInput, video);
-    
+    console.log(`[videoToWebp] Input file written, size: ${video.length}`);
+
     await new Promise((resolve, reject) => {
       ff(tempInput)
         .inputOptions(["-y", "-t", "20"])
@@ -72,15 +93,24 @@ async function videoToWebp(video) {
         ])
         .toFormat("webp")
         .save(tempFile)
-        .on("end", () => resolve())
-        .on("error", reject);
+        .on("end", () => {
+          console.log(`[videoToWebp] Conversion completed`);
+          resolve();
+        })
+        .on("error", (err) => {
+          console.error(`[videoToWebp] FFmpeg error: ${err.message}`);
+          reject(err);
+        });
     });
 
     const buffer = fs.readFileSync(tempFile);
+    console.log(`[videoToWebp] Output buffer size: ${buffer.length}`);
+
     fs.unlinkSync(tempFile);
     fs.unlinkSync(tempInput);
     return buffer;
   } catch (error) {
+    console.error(`[videoToWebp] Error: ${error.message}`);
     try {
       fs.unlinkSync(tempFile);
       fs.unlinkSync(tempInput);
@@ -89,63 +119,111 @@ async function videoToWebp(video) {
   }
 }
 
-async function writeExifImg(image, metadata) {
-  const img = new webp.Image();
-  const json = { "sticker-pack-id": "OrbitStudio", "sticker-pack-name": metadata.packname, "sticker-pack-publisher": metadata.author, "emojis": metadata.categories };
-  const exifAttr = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
-  const jsonBuff = Buffer.from(JSON.stringify(json), "utf-8");
-  const exif = Buffer.concat([exifAttr, jsonBuff]);
-  exif.writeUIntLE(jsonBuff.length, 14, 4);
-  
-  await img.load(await imageToWebp(image));
-  img.exif = exif;
-  return await img.save(null);
+// Fungsi writeExifImg
+async function writeExifImg(image, metadata, customName = null) {
+  console.log(`[writeExifImg] Starting with metadata:`, metadata);
+  try {
+    const img = new webp.Image();
+    const json = {
+      "sticker-pack-id": "OrbitStudio",
+      "sticker-pack-name": metadata.packname || "DefaultPack",
+      "sticker-pack-publisher": metadata.author || "Unknown",
+      "emojis": metadata.categories || [""]
+    };
+    const exifAttr = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
+    const jsonBuff = Buffer.from(JSON.stringify(json), "utf-8");
+    const exif = Buffer.concat([exifAttr, jsonBuff]);
+    exif.writeUIntLE(jsonBuff.length, 14, 4);
+
+    const webpBuffer = await imageToWebp(image, customName);
+    await img.load(webpBuffer);
+    img.exif = exif;
+    const result = await img.save(null);
+    console.log(`[writeExifImg] Sticker buffer size: ${result.length}`);
+    return result;
+  } catch (error) {
+    console.error(`[writeExifImg] Error: ${error.message}`);
+    throw error;
+  }
 }
 
-async function writeExifVid(video, metadata) {
-  const img = new webp.Image();
-  const json = { "sticker-pack-id": "OrbitStudio", "sticker-pack-name": metadata.packname, "sticker-pack-publisher": metadata.author, "emojis": metadata.categories };
-  const exifAttr = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
-  const jsonBuff = Buffer.from(JSON.stringify(json), "utf-8");
-  const exif = Buffer.concat([exifAttr, jsonBuff]);
-  exif.writeUIntLE(jsonBuff.length, 14, 4);
-  
-  await img.load(await videoToWebp(video));
-  img.exif = exif;
-  return await img.save(null);
+// Fungsi writeExifVid
+async function writeExifVid(video, metadata, customName = null) {
+  console.log(`[writeExifVid] Starting with metadata:`, metadata);
+  try {
+    const img = new webp.Image();
+    const json = {
+      "sticker-pack-id": "OrbitStudio",
+      "sticker-pack-name": metadata.packname || "DefaultPack",
+      "sticker-pack-publisher": metadata.author || "Unknown",
+      "emojis": metadata.categories || [""]
+    };
+    const exifAttr = Buffer.from([0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00]);
+    const jsonBuff = Buffer.from(JSON.stringify(json), "utf-8");
+    const exif = Buffer.concat([exifAttr, jsonBuff]);
+    exif.writeUIntLE(jsonBuff.length, 14, 4);
+
+    const webpBuffer = await videoToWebp(video, customName);
+    await img.load(webpBuffer);
+    img.exif = exif;
+    const result = await img.save(null);
+    console.log(`[writeExifVid] Sticker buffer size: ${result.length}`);
+    return result;
+  } catch (error) {
+    console.error(`[writeExifVid] Error: ${error.message}`);
+    throw error;
+  }
 }
 
-async function writeExifWebp(media, metadata) {
+// Fungsi writeExifWebp
+async function writeExifWebp(media, metadata, customNameIn = null, customNameOut = null) {
   const tmpFileIn = path.join(
     tmpdir(),
-    `${Crypto.randomBytes(6).readUIntLE(0, 6).toString(36)}.webp`
+    customNameIn ? `${customNameIn}.webp` : `${Crypto.randomBytes(6).readUIntLE(0, 6).toString(36)}.webp`
   );
   const tmpFileOut = path.join(
     tmpdir(),
-    `${Crypto.randomBytes(6).readUIntLE(0, 6).toString(36)}.webp`
+    customNameOut ? `${customNameOut}.webp` : `${Crypto.randomBytes(6).readUIntLE(0, 6).toString(36)}.webp`
   );
-  fs.writeFileSync(tmpFileIn, media);
 
-  if (metadata.packname || metadata.author) {
+  console.log(`[writeExifWebp] Input file: ${tmpFileIn}, Output file: ${tmpFileOut}`);
+
+  try {
+    fs.writeFileSync(tmpFileIn, media);
+    console.log(`[writeExifWebp] Input file written, size: ${media.length}`);
+
     const img = new webp.Image();
     const json = {
-      "sticker-pack-id": `NatzsixnPacks`,
-      "sticker-pack-name": `NatzsixnPacks`,
-      "sticker-pack-publisher": `OrbitStudio`,
-      emojis: metadata.categories ? metadata.categories : [""],
+      "sticker-pack-id": "NatzsixnPacks",
+      "sticker-pack-name": metadata.packname || "NatzsixnPacks",
+      "sticker-pack-publisher": metadata.author || "OrbitStudio",
+      "emojis": metadata.categories || [""]
     };
-    const exifAttr = await Buffer.from([
-      0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57,
-      0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00,
+    const exifAttr = Buffer.from([
+      0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00, 0x41, 0x57,
+      0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x00
     ]);
-    const jsonBuff = await Buffer.from(JSON.stringify(json), "utf-8");
-    const exif = await Buffer.concat([exifAttr, jsonBuff]);
-    await exif.writeUIntLE(jsonBuff.length, 14, 4);
+    const jsonBuff = Buffer.from(JSON.stringify(json), "utf-8");
+    const exif = Buffer.concat([exifAttr, jsonBuff]);
+    exif.writeUIntLE(jsonBuff.length, 14, 4);
+
     await img.load(tmpFileIn);
-    fs.unlinkSync(tmpFileIn);
     img.exif = exif;
     await img.save(tmpFileOut);
-    return tmpFileOut;
+
+    const buffer = fs.readFileSync(tmpFileOut);
+    console.log(`[writeExifWebp] Output buffer size: ${buffer.length}`);
+
+    fs.unlinkSync(tmpFileIn);
+    fs.unlinkSync(tmpFileOut);
+    return buffer;
+  } catch (error) {
+    console.error(`[writeExifWebp] Error: ${error.message}`);
+    try {
+      fs.unlinkSync(tmpFileIn);
+      fs.unlinkSync(tmpFileOut);
+    } catch {}
+    throw error;
   }
 }
 
