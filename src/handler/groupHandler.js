@@ -1,6 +1,9 @@
 const { botLogger } = require("../utils/logger");
 const db = require("../../database/confLowDb/lowdb"); // Impor dari lowdb.js yang menggunakan AJV
 const { groupCache } = require("../../config/config");
+const { createWelcomeText, createGoodbyeText } = require("../lib/welcomeNgoodbyemsg");
+const path = require("path");
+const fileManager = require("../../config/memoryAsync/readfile");
 
 // Objek untuk melacak pesan error yang sudah dikirim
 const errorSentTracker = new Map();
@@ -130,15 +133,61 @@ async function handleGroupMessage(sock, msg) {
       }
     }
 
-    // Contoh pesan selamat datang atau perpisahan
+    // Handle welcome dan goodbye message
     if (msg.key.participant && msg.messageStubType) {
-      const action =
-        msg.messageStubType === 28 // GROUP_PARTICIPANT_ADD
-          ? "bergabung"
-          : "keluar"; // GROUP_PARTICIPANT_REMOVE
-      await reply(
-        `@${userId} telah ${action} dari grup ${groupMetadata.subject}!`
-      );
+      const group = await db.getGroup(chat);
+      if (!group) return;
+
+      const isWelcomeEnabled = group.welcome_message === 1;
+      if (!isWelcomeEnabled) return;
+
+      const action = msg.messageStubType === 28 ? "welcome" : "goodbye"; // 28 = GROUP_PARTICIPANT_ADD
+      const backgroundPath = path.join(__dirname, '../assets/background.png');
+
+      try {
+        // Cek keberadaan file background
+        const backgroundExists = await fileManager.fileExists(backgroundPath);
+        if (!backgroundExists) {
+          throw new Error('File background tidak ditemukan');
+        }
+
+        let imagePath;
+        if (action === "welcome") {
+          imagePath = await createWelcomeText(backgroundPath);
+        } else {
+          imagePath = await createGoodbyeText(backgroundPath);
+        }
+
+        if (!imagePath) {
+          throw new Error(`Gagal membuat gambar ${action}`);
+        }
+
+        // Cek keberadaan file gambar yang dibuat
+        const imageExists = await fileManager.fileExists(imagePath);
+        if (!imageExists) {
+          throw new Error('File gambar tidak ditemukan');
+        }
+
+        // Kirim gambar dengan caption
+        const caption = action === "welcome" 
+          ? `Selamat datang @${userId} di ${groupMetadata.subject}! 🌸`
+          : `Selamat tinggal @${userId} dari ${groupMetadata.subject}! 👋`;
+
+        await sock.sendMessage(chat, {
+          image: await fileManager.readFile(imagePath),
+          caption: caption,
+          mentions: [sender]
+        });
+
+        // Hapus file gambar setelah dikirim
+        await fileManager.deleteFile(imagePath);
+      } catch (error) {
+        botLogger.error(`Error creating ${action} message:`, error);
+        // Fallback ke pesan teks jika gagal membuat gambar
+        await reply(
+          `@${userId} telah ${action === "welcome" ? "bergabung" : "keluar"} dari grup ${groupMetadata.subject}!`
+        );
+      }
       return;
     }
   } catch (error) {

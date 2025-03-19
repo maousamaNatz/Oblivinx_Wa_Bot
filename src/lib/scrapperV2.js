@@ -1,5 +1,4 @@
 const axios = require("axios");
-const fetch = require("node-fetch");
 const cheerio = require("cheerio");
 const ytdl = require("ytdl-core");
 const FormData = require("form-data");
@@ -44,20 +43,30 @@ async function cekKhodam(nama) {
 
 /** download **/
 async function tiktokDl(url) {
-  let response = await axios.post(
-    "https://www.tikwm.com/api",
-    {},
-    {
-      params: {
-        url: url,
-        count: 12,
-        cursor: 0,
-        web: 1,
-        hd: 1,
-      },
-    }
-  );
-  return response.data;
+  try {
+    let response = await axios.post(
+      "https://www.tikwm.com/api",
+      {},
+      {
+        params: {
+          url: url,
+          count: 12,
+          cursor: 0,
+          web: 1,
+          hd: 1,
+        },
+      }
+    );
+    
+    // Pastikan kita hanya mengembalikan data yang diperlukan tanpa manipulasi jalur
+    return response.data;
+  } catch (error) {
+    console.error("TikTok Download Error:", error);
+    return {
+      code: -1,
+      msg: error.message || "Terjadi kesalahan saat download video TikTok"
+    };
+  }
 }
 
 async function tiktokDlV2(urls) {
@@ -370,8 +379,8 @@ async function ytv(query, quality = 134) {
       format: quality,
       filter: "videoandaudio",
     });
-    let response = await fetch(format.url, { method: "HEAD" });
-    let contentLength = response.headers.get("content-length");
+    let response = await axios.head(format.url);
+    let contentLength = response.headers["content-length"];
     let fileSizeInBytes = parseInt(contentLength);
     return {
       title: videoInfo.videoDetails.title,
@@ -566,10 +575,10 @@ async function pix(query) {
 async function npmSearch(query) {
   return new Promise(async (resolve, reject) => {
     try {
-      const res = await fetch(
+      const res = await axios.get(
         "https://www.npmjs.com/search/suggestions?" +
           new URLSearchParams({ q: query })
-      ).then((v) => v.json());
+      ).then((v) => v.data);
       if (!res.length) return reject("Packages Not Found");
       return resolve(res);
     } catch (e) {
@@ -581,10 +590,9 @@ async function npmSearch(query) {
 async function npmSearch2(query) {
   return new Promise(async (resolve, reject) => {
     try {
-      const res = await fetch(
+      const res = await axios.get(
         "https://www.npmjs.com/search?" + new URLSearchParams({ q: query }),
         {
-          method: "GET",
           headers: {
             Referer: "https://www.npmjs.com/",
             "user-agent":
@@ -592,7 +600,7 @@ async function npmSearch2(query) {
             "X-Spiferack": 1,
           },
         }
-      ).then((v) => v.json());
+      ).then((v) => v.data);
       if (!res.total) return reject("Packages Not Found");
       resolve(res);
     } catch (e) {
@@ -604,10 +612,9 @@ async function npmSearch2(query) {
 async function npm(packageName) {
   return new Promise(async (resolve, reject) => {
     try {
-      const res = await fetch(
+      const res = await axios.get(
         "https://www.npmjs.com/package/" + packageName.replace(" "),
         {
-          method: "GET",
           headers: {
             Referer: "https://www.npmjs.com/",
             "user-agent":
@@ -615,7 +622,7 @@ async function npm(packageName) {
             "X-Spiferack": 1,
           },
         }
-      ).then((v) => v.json());
+      ).then((v) => v.data);
       if (!res.package) return reject("Package Not Found");
       resolve(res);
     } catch (e) {
@@ -629,42 +636,40 @@ async function shortlink(apikey, command, out, custom) {
   let anu, url;
   try {
     if (/ulvis/.test(command)) {
-      anu = await fetch(
+      anu = await axios.get(
         `https://ulvis.net/API/write/get?url=${out}&custom=${
           custom || ""
         }&type=json`
-      ).then((res) => res.json());
+      ).then((res) => res.data);
       if (!anu.success) return anu.error.msg;
       anu = anu.data;
       if (anu.status) return anu.status;
       url = anu.url;
     } else if (/shrtco/.test(command)) {
-      anu = await fetch(`https://api.shrtco.de/v2/shorten?url=${out}`).then(
-        (res) => res.json()
+      anu = await axios.get(`https://api.shrtco.de/v2/shorten?url=${out}`).then(
+        (res) => res.data
       );
       if (!anu.ok) return anu.error;
       url = anu.result.full_short_link;
     } else if (/owovc/.test(command)) {
-      anu = await fetch("https://owo.vc/api/v2/link", {
-        method: "POST",
+      anu = await axios.post("https://owo.vc/api/v2/link", {
+        link: out,
+        generator: "owo",
+        metadata: "OWOIFY",
+      }, {
         headers: {
           accept: "application/json",
           "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          link: out,
-          generator: "owo",
-          metadata: "OWOIFY",
-        }),
-      }).then((res) => res.json());
+        }
+      }).then((res) => res.data);
       if (anu.error) return anu.message;
       url = anu.id;
     } else if (/cuttly/.test(command)) {
-      anu = await fetch(
+      anu = await axios.get(
         `https://cutt.ly/api/api.php?key=${apikey.cuttly}&short=${out}&name=${
           custom || ""
         }`
-      ).then((res) => res.json());
+      ).then((res) => res.data);
       anu = anu.url;
       if (!anu.shortLink)
         return `error code ${
@@ -672,39 +677,35 @@ async function shortlink(apikey, command, out, custom) {
         }`;
       url = anu.shortLink;
     } else if (/tinyurl/.test(command)) {
-      anu = await fetch("https://api.tinyurl.com/create", {
-        method: "POST",
+      anu = await axios.post("https://api.tinyurl.com/create", {
+        url: out,
+        domain: "tinyurl.com",
+        alias: `${custom || ""}`,
+      }, {
         headers: {
           Authorization: `Bearer ${apikey.tinyurl}`,
           accept: "application/json",
           "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: out,
-          domain: "tinyurl.com",
-          alias: `${custom || ""}`,
-        }),
-      }).then((res) => res.json());
+        }
+      }).then((res) => res.data);
       url = anu;
       if (anu.errors && anu.errors.length > 0) return anu.errors[0];
       url = anu.data.tiny_url;
     } else if (/tinycc/.test(command)) {
-      anu = await fetch("https://tiny.cc/tiny/api/3/urls/", {
-        method: "POST",
+      anu = await axios.post("https://tiny.cc/tiny/api/3/urls/", {
+        urls: [
+          {
+            long_url: out,
+            custom_hash: `${custom || ""}`,
+          },
+        ],
+      }, {
         headers: {
           Authorization: `Basic ${apikey.tinycc}`,
           accept: "application/json",
           "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          urls: [
-            {
-              long_url: out,
-              custom_hash: `${custom || ""}`,
-            },
-          ],
-        }),
-      }).then((res) => res.json());
+        }
+      }).then((res) => res.data);
       if (!anu.urls) return anu.error.message;
       if (!anu.urls[0].short_url) return anu.urls[0].error.message;
       url = anu.urls[0].short_url_with_protocol;

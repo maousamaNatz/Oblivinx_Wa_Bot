@@ -1,9 +1,6 @@
-const axios = require("axios"),
-  { pinterestCookies } = require("../../config/config");
+const axios = require("axios");
 const wiki = require("wikipedia");
-const PinterestScrapper = require("../lib/scrapper");
 const GempaScraper = require("../lib/gempa");
-const { HttpsProxyAgent } = require("https-proxy-agent");
 const fs = require("fs");
 const acrcloud = require("acrcloud");
 const FileManager = require("../../config/memoryAsync/readfile");
@@ -129,7 +126,7 @@ Oblixn.cmd({
           await msg.reply(replyText);
         }
       }
-    } catch (error) {
+    } catch (error) { 
       console.error("Wikipedia Error:", error);
       return msg.reply(
         "⚠️ Terjadi kesalahan saat mencari di Wikipedia. Silakan coba lagi nanti."
@@ -138,65 +135,6 @@ Oblixn.cmd({
   },
 });
 
-// Command Pinterest
-Oblixn.cmd({
-  name: "pinterest",
-  alias: ["pin"],
-  desc: "🖼️ Mencari gambar di Pinterest",
-  category: "search",
-  async exec(msg, { args }) {
-    if (!args.length) return msg.reply("❌ Masukkan kata kunci pencarian!");
-    const query = args.join(" ");
-
-    try {
-      const waitMsg = await msg.reply(
-        `🔍 Sedang mencari gambar untuk: "${query}"...`
-      );
-
-      const scrapper = new PinterestScrapper(pinterestCookies);
-      scrapper.on("error", console.error);
-      scrapper.on("warning", console.warn);
-
-      const results = await scrapper.searchPins(query, {
-        limit: 5,
-        type: "image",
-        retry: true,
-      });
-
-      if (!results || results.length === 0) {
-        return msg.reply(
-          "🚫 Tidak ditemukan hasil untuk pencarian tersebut. Coba dengan kata kunci yang lebih umum."
-        );
-      }
-
-      // Batasi jumlah gambar
-      const maxImages = Math.min(3, results.length);
-
-      for (let i = 0; i < maxImages; i++) {
-        try {
-          const imageBuffer = await downloadImage(results[i].imageUrl);
-          await msg.reply({
-            image: imageBuffer,
-            caption: `🔍 Hasil pencarian untuk: ${query}\n📌 ${
-              i + 1
-            }/${maxImages}`,
-          });
-
-          // Delay antar pengiriman
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        } catch (err) {
-          console.error(`Failed to process image ${i + 1}:`, err);
-          continue;
-        }
-      }
-    } catch (error) {
-      console.error("Pinterest Error:", error);
-      return msg.reply(
-        "⚠️ Terjadi kesalahan saat mencari di Pinterest. Silakan coba lagi nanti."
-      );
-    }
-  },
-});
 
 // Command untuk gempa
 Oblixn.cmd({

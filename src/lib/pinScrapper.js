@@ -1,12 +1,13 @@
 const axios = require('axios');
-const fs = require('fs');
 const cheerio = require('cheerio');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const puppeteer = require('puppeteer');
 const { promisify } = require('util');
 const sleep = promisify(setTimeout);
-const chalk = require('chalk');
+const { botLogger } = require('../utils/logger');
+const FileManager = require('../../config/memoryAsync/readfile');
+const path = require('path');
+const fs = require('fs');
 
 class PinterestScraper {
   constructor(options = {}) {
@@ -26,29 +27,14 @@ class PinterestScraper {
     ];
     this.logLevel = options.logLevel || 'info';
     this.headless = options.headless !== undefined ? options.headless : true;
-
-    if (!fs.existsSync(this.outputDir)) {
-      fs.mkdirSync(this.outputDir, { recursive: true });
-    }
-
-    if (this.downloadImages && !fs.existsSync(path.join(this.outputDir, 'images'))) {
-      fs.mkdirSync(path.join(this.outputDir, 'images'), { recursive: true });
-    }
-
     this.sessionId = uuidv4();
-    this.logger = this.setupLogger();
-  }
-
-  setupLogger() {
-    const logLevels = { error: 0, warn: 1, info: 2, debug: 3 };
-    const currentLevel = logLevels[this.logLevel] || 2;
-
-    return {
-      error: (...args) => { if (currentLevel >= 0) console.error(chalk.red('[ERROR]'), ...args); },
-      warn: (...args) => { if (currentLevel >= 1) console.warn(chalk.yellow('[WARNING]'), ...args); },
-      info: (...args) => { if (currentLevel >= 2) console.info(chalk.blue('[INFO]'), ...args); },
-      debug: (...args) => { if (currentLevel >= 3) console.debug(chalk.gray('[DEBUG]'), ...args); }
-    };
+    this.cache = new Map();
+    this.lastRequestTime = 0;
+    this.requestCount = 0;
+    this.maxRequestsPerMinute = 60;
+    this.minRequestInterval = 1000 / this.maxRequestsPerMinute;
+    
+    // FileManager menangani pembuatan direktori secara otomatis
   }
 
   getRandomUserAgent() {
@@ -57,13 +43,26 @@ class PinterestScraper {
 
   async loadCookies() {
     try {
-      if (!fs.existsSync(this.cookiePath)) {
-        throw new Error('Cookie file does not exist');
+      // Coba baca file cookie
+      let cookieData;
+      
+      try {
+        if (fs.existsSync(this.cookiePath)) {
+          cookieData = JSON.parse(fs.readFileSync(this.cookiePath, 'utf8'));
+        } else {
+          throw new Error('Cookie file tidak ditemukan');
+        }
+      } catch (fsError) {
+        botLogger.warn(`Gagal membaca file cookie langsung: ${fsError.message}`);
+        botLogger.info('Mencoba menggunakan FileManager...');
+        cookieData = await FileManager.readFile(this.cookiePath);
+        
+        if (!cookieData) {
+          throw new Error('Cookie file tidak ditemukan');
+        }
       }
-      const cookieData = JSON.parse(fs.readFileSync(this.cookiePath, 'utf8'));
-      this.logger.debug('Raw cookie data:', cookieData);
+
       let cookieArray;
-  
       if (Array.isArray(cookieData)) {
         cookieArray = cookieData.filter(cookie =>
           cookie.name && cookie.value && typeof cookie.name === 'string' && typeof cookie.value === 'string'
@@ -73,20 +72,20 @@ class PinterestScraper {
           .filter(([name, value]) => name && value && typeof name === 'string' && typeof value === 'string')
           .map(([name, value]) => ({ name, value }));
       } else {
-        throw new Error('Invalid cookie format: must be an array or object');
+        throw new Error('Format cookie tidak valid');
       }
-  
+
       if (cookieArray.length === 0) {
-        throw new Error('No valid cookies found in cookie.json');
+        throw new Error('Tidak ada cookie yang valid');
       }
-  
-      this.logger.debug('Filtered cookies:', cookieArray);
+
+      botLogger.debug('Cookie berhasil dimuat:', cookieArray.length);
       return {
         cookieHeader: cookieArray.map(cookie => `${cookie.name}=${cookie.value}`).join('; '),
         cookieArray
       };
     } catch (error) {
-      this.logger.error(`Failed to load cookies from ${this.cookiePath}:`, error.message);
+      botLogger.error(`Gagal memuat cookie: ${error.message}`);
       throw error;
     }
   }
@@ -98,11 +97,30 @@ class PinterestScraper {
     return proxy;
   }
 
+  async rateLimit() {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    
+    if (timeSinceLastRequest < this.minRequestInterval) {
+      await sleep(this.minRequestInterval - timeSinceLastRequest);
+    }
+    
+    this.lastRequestTime = Date.now();
+    this.requestCount++;
+    
+    if (this.requestCount >= this.maxRequestsPerMinute) {
+      await sleep(60000);
+      this.requestCount = 0;
+    }
+  }
+
   async makeRequest(url, options = {}) {
     let lastError;
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
+        await this.rateLimit();
+        
         const proxy = await this.getNextProxy();
         const requestOptions = {
           headers: {
@@ -118,20 +136,47 @@ class PinterestScraper {
 
         if (proxy) requestOptions.proxy = proxy;
 
-        this.logger.debug(`Request to ${url} (Attempt ${attempt + 1}/${this.maxRetries})`);
+        botLogger.debug(`Request ke ${url} (Percobaan ${attempt + 1}/${this.maxRetries})`);
         const response = await axios.get(url, requestOptions);
         await sleep(this.rateLimitDelay);
         return response;
       } catch (error) {
         lastError = error;
-        this.logger.warn(`Attempt ${attempt + 1}/${this.maxRetries} failed:`, error.message);
+        botLogger.warn(`Percobaan ${attempt + 1}/${this.maxRetries} gagal:`, error.message);
         const delay = Math.pow(2, attempt) * 1000 + Math.floor(Math.random() * 1000);
-        this.logger.debug(`Retrying in ${delay}ms...`);
+        botLogger.debug(`Mencoba lagi dalam ${delay}ms...`);
         await sleep(delay);
       }
     }
 
-    throw new Error(`Request failed after ${this.maxRetries} attempts: ${lastError.message}`);
+    throw new Error(`Request gagal setelah ${this.maxRetries} percobaan: ${lastError.message}`);
+  }
+
+  async downloadImage(imageUrl, fileName) {
+    if (!imageUrl) return null;
+
+    try {
+      const response = await axios({
+        method: 'GET',
+        url: imageUrl,
+        responseType: 'arraybuffer'
+      });
+
+      const result = await FileManager.saveFile(
+        Buffer.from(response.data),
+        fileName,
+        'images'
+      );
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      return result.path;
+    } catch (error) {
+      botLogger.warn(`Gagal mengunduh gambar ${imageUrl}:`, error.message);
+      return null;
+    }
   }
 
   async scrapePinterestWithBrowser(keyword, limit = 10) {
@@ -139,11 +184,11 @@ class PinterestScraper {
       headless: this.headless,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
     });
-  
+
     try {
       const page = await browser.newPage();
       let cookieArray = [];
-  
+
       try {
         const cookies = await this.loadCookies();
         cookieArray = cookies.cookieArray;
@@ -153,72 +198,74 @@ class PinterestScraper {
           domain: '.pinterest.com',
           path: '/'
         }));
-        this.logger.debug('Setting cookies:', JSON.stringify(cookiesToSet, null, 2));
+        botLogger.debug('Mengatur cookie:', JSON.stringify(cookiesToSet, null, 2));
         await page.setCookie(...cookiesToSet);
       } catch (error) {
-        this.logger.warn('Proceeding without cookies due to loading error:', error.message);
+        botLogger.warn('Melanjutkan tanpa cookie karena error:', error.message);
       }
-  
+
       const searchUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(keyword)}`;
-      this.logger.info(`Navigating to ${searchUrl}`);
+      botLogger.info(`Membuka ${searchUrl}`);
       await page.goto(searchUrl, { waitUntil: 'networkidle2' });
-  
-      // Tunggu elemen pin muncul atau tambahkan timeout
+
       try {
         await page.waitForSelector('[data-test-id="pin"]', { timeout: 10000 });
       } catch (e) {
-        this.logger.warn('Pin elements not found within timeout, saving HTML for debugging');
+        botLogger.warn('Elemen pin tidak ditemukan, menyimpan HTML untuk debugging');
         const html = await page.content();
-        fs.writeFileSync('debug.html', html);
+        await FileManager.saveFile(Buffer.from(html), 'debug.html', 'temp');
       }
-  
-      this.logger.info(`Scrolling to load more pins...`);
+
+      botLogger.info(`Scroll untuk memuat lebih banyak pin...`);
       const maxScrolls = Math.ceil(limit / 25) + 2;
-  
+
       for (let i = 0; i < maxScrolls; i++) {
         await page.evaluate(() => window.scrollBy(0, window.innerHeight * 2));
-        await sleep(2000); // Tambah delay untuk memastikan konten dimuat
-        this.logger.debug(`Scroll ${i + 1}/${maxScrolls}`);
+        await sleep(2000);
+        botLogger.debug(`Scroll ${i + 1}/${maxScrolls}`);
       }
-  
-      this.logger.info(`Extracting pin data...`);
+
+      botLogger.info(`Mengekstrak data pin...`);
       const pinData = await page.evaluate(() => {
         const pins = [];
-        // Coba beberapa selektor alternatif
         const pinElements = document.querySelectorAll('[data-test-id="pin"], .pinWrapper, div[data-grid-item]');
-  
+
         pinElements.forEach(pin => {
           try {
             const pinId = pin.getAttribute('data-pin-id') || pin.querySelector('a')?.href?.match(/pin\/(\d+)/)?.[1];
             if (!pinId) return;
-  
+
             const imageElement = pin.querySelector('img');
             const linkElement = pin.querySelector('a');
             const descElement = pin.querySelector('[data-test-id="pin-description"], .description');
             const boardElement = pin.querySelector('[data-test-id="board-name"], .boardName');
-  
+            const userElement = pin.querySelector('[data-test-id="pinner-name"]');
+            const likeElement = pin.querySelector('[data-test-id="like-count"]');
+            const saveElement = pin.querySelector('[data-test-id="save-count"]');
+
             pins.push({
               id: pinId,
               description: descElement ? descElement.textContent.trim() : '',
               imageUrl: imageElement ? imageElement.src.replace(/\/236x\//, '/originals/') : null,
               pinUrl: linkElement ? linkElement.href : null,
               board: boardElement ? boardElement.textContent.trim() : '',
+              user: userElement ? userElement.textContent.trim() : '',
+              likes: likeElement ? likeElement.textContent.trim() : '0',
+              saves: saveElement ? saveElement.textContent.trim() : '0',
               timestamp: new Date().toISOString()
             });
           } catch (e) {
             console.error('Error parsing pin:', e);
           }
         });
-  
+
         return pins;
       });
-  
-      this.logger.info(`Found ${pinData.length} pins`);
-      const limitedResults = pinData.slice(0, limit);
-      await this.saveResults(limitedResults, keyword);
-      return limitedResults;
+
+      botLogger.info(`Ditemukan ${pinData.length} pin`);
+      return pinData.slice(0, limit);
     } catch (error) {
-      this.logger.error('Browser scraping error:', error);
+      botLogger.error('Error scraping dengan browser:', error);
       throw error;
     } finally {
       await browser.close();
@@ -226,7 +273,7 @@ class PinterestScraper {
   }
 
   async scrapeAdditionalPinDetails(pinData) {
-    this.logger.info(`Fetching additional details for ${pinData.length} pins...`);
+    botLogger.info(`Mengambil detail tambahan untuk ${pinData.length} pin...`);
     const enhancedPins = [];
 
     for (let i = 0; i < pinData.length; i++) {
@@ -237,7 +284,7 @@ class PinterestScraper {
       }
 
       try {
-        this.logger.debug(`Processing pin ${i + 1}/${pinData.length}: ${pin.id}`);
+        botLogger.debug(`Memproses pin ${i + 1}/${pinData.length}: ${pin.id}`);
         const { cookieHeader } = await this.loadCookies();
         const response = await this.makeRequest(pin.pinUrl, { cookieHeader });
         const $ = cheerio.load(response.data);
@@ -255,19 +302,32 @@ class PinterestScraper {
         const ogImage = $('meta[property="og:image"]').attr('content');
         if (ogImage) highResImageUrl = ogImage;
 
+        // Cek apakah video
+        const isVideo = $('meta[name="twitter:card"]').attr('content') === 'player' || 
+                        $('meta[property="og:video"]').length > 0;
+        
+        let videoUrl = null;
+        if (isVideo) {
+          videoUrl = $('meta[property="og:video"]').attr('content') || 
+                     $('meta[property="og:video:url"]').attr('content') || 
+                     $('video source').attr('src');
+        }
+
         enhancedPins.push({
           ...pin,
           imageUrl: highResImageUrl,
-          user: userProfile,
-          likes: likeCount,
-          saves: saveCount,
+          videoUrl: videoUrl,
+          isVideo: isVideo,
+          user: userProfile || pin.user,
+          likes: likeCount || pin.likes,
+          saves: saveCount || pin.saves,
           hashtags,
           fetchedAt: new Date().toISOString()
         });
 
         await sleep(this.rateLimitDelay);
       } catch (error) {
-        this.logger.warn(`Failed to fetch details for pin ${pin.id}:`, error.message);
+        botLogger.warn(`Gagal mengambil detail untuk pin ${pin.id}:`, error.message);
         enhancedPins.push(pin);
       }
     }
@@ -275,118 +335,8 @@ class PinterestScraper {
     return enhancedPins;
   }
 
-  async downloadImage(imageUrl, fileName) {
-    if (!imageUrl) return null;
-
-    try {
-      const response = await axios({
-        method: 'GET',
-        url: imageUrl,
-        responseType: 'stream'
-      });
-
-      const filePath = path.join(this.outputDir, 'images', fileName);
-      const writer = fs.createWriteStream(filePath);
-      response.data.pipe(writer);
-
-      return new Promise((resolve, reject) => {
-        writer.on('finish', () => resolve(filePath));
-        writer.on('error', reject);
-      });
-    } catch (error) {
-      this.logger.warn(`Image download failed for ${imageUrl}:`, error.message);
-      return null;
-    }
-  }
-
-  escapeCSV(value) {
-    if (value === null || value === undefined) return '';
-    const stringValue = String(value).replace(/"/g, '""');
-    if (/[,"\n\r]/.test(stringValue)) return `"${stringValue}"`;
-    return stringValue;
-  }
-
-  writeCSV(data, filePath) {
-    if (!data || data.length === 0) {
-      this.logger.warn('No data to write to CSV');
-      return false;
-    }
-
-    try {
-      const allKeys = new Set();
-      data.forEach(item => Object.keys(item).forEach(key => allKeys.add(key)));
-      const headers = Array.from(allKeys).sort();
-      const headerRow = headers.map(header => this.escapeCSV(header)).join(',');
-      const rows = data.map(item => headers.map(header => this.escapeCSV(item[header])).join(','));
-      const csvContent = [headerRow, ...rows].join('\n');
-      fs.writeFileSync(filePath, csvContent);
-      this.logger.info(`CSV data saved to ${filePath}`);
-      return true;
-    } catch (error) {
-      this.logger.error(`Failed to write CSV: ${error.message}`);
-      return false;
-    }
-  }
-
-  async saveResults(pinData, keyword) {
-    const timestamp = new Date().toISOString().replace(/:/g, '-');
-    const fileNameBase = `pinterest_${keyword.replace(/\s+/g, '_')}_${timestamp}`;
-
-    if (this.downloadImages) {
-      this.logger.info(`Downloading ${pinData.length} images...`);
-      for (let i = 0; i < pinData.length; i++) {
-        const pin = pinData[i];
-        if (!pin.imageUrl) continue;
-
-        const extension = this.getImageExtension(pin.imageUrl);
-        const imageName = `${pin.id}${extension}`;
-        this.logger.debug(`Downloading image ${i + 1}/${pinData.length}: ${imageName}`);
-        const filePath = await this.downloadImage(pin.imageUrl, imageName);
-
-        if (filePath) pinData[i].localImagePath = filePath;
-        await sleep(100);
-      }
-    }
-
-    switch (this.outputFormat.toLowerCase()) {
-      case 'json':
-        const jsonPath = path.join(this.outputDir, `${fileNameBase}.json`);
-        fs.writeFileSync(jsonPath, JSON.stringify(pinData, null, 2));
-        this.logger.info(`JSON data saved to ${jsonPath}`);
-        break;
-      case 'csv':
-        const csvPath = path.join(this.outputDir, `${fileNameBase}.csv`);
-        this.writeCSV(pinData, csvPath);
-        break;
-      default:
-        this.logger.warn(`Unsupported output format: ${this.outputFormat}, defaulting to JSON`);
-        const defaultPath = path.join(this.outputDir, `${fileNameBase}.json`);
-        fs.writeFileSync(defaultPath, JSON.stringify(pinData, null, 2));
-        break;
-    }
-
-    const metadataPath = path.join(this.outputDir, `${fileNameBase}_metadata.json`);
-    const metadata = {
-      query: keyword,
-      timestamp: new Date().toISOString(),
-      sessionId: this.sessionId,
-      totalResults: pinData.length,
-      imagesDownloaded: this.downloadImages ? pinData.filter(p => p.localImagePath).length : 0,
-      outputFormat: this.outputFormat
-    };
-
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-    this.logger.info(`Metadata saved to ${metadataPath}`);
-  }
-
-  getImageExtension(url) {
-    const regex = /\.(jpe?g|png|gif|webp)(?:\?.*)?$/i;
-    const match = url.match(regex);
-    return match ? `.${match[1].toLowerCase()}` : '.jpg';
-  }
-
   async scrapePinterest(keyword, limit = 10, searchOptions = {}) {
-    this.logger.info(`Starting Pinterest scraper for keyword: "${keyword}" with limit: ${limit}`);
+    botLogger.info(`Memulai Pinterest scraper untuk kata kunci: "${keyword}" dengan limit: ${limit}`);
 
     const options = { useBrowser: true, fetchAdditionalDetails: true, ...searchOptions };
     let pinData;
@@ -401,7 +351,7 @@ class PinterestScraper {
       pinData = await this.scrapeAdditionalPinDetails(pinData);
     }
 
-    this.logger.info(`Scraping completed: Found ${pinData.length} results`);
+    botLogger.info(`Scraping selesai: Ditemukan ${pinData.length} hasil`);
     return pinData;
   }
 
@@ -409,7 +359,7 @@ class PinterestScraper {
     try {
       const { cookieHeader } = await this.loadCookies();
       const searchUrl = `https://www.pinterest.com/search/pins/?q=${encodeURIComponent(keyword)}`;
-      this.logger.info(`Making HTTP request to ${searchUrl}`);
+      botLogger.info(`Membuat request HTTP ke ${searchUrl}`);
       const response = await this.makeRequest(searchUrl, { cookieHeader });
       const $ = cheerio.load(response.data);
       let pinData = [];
@@ -422,7 +372,7 @@ class PinterestScraper {
             const jsonMatch = scriptContent.match(/\{"__PWS_DATA__".*?}\);/);
             if (jsonMatch) jsonData = JSON.parse(jsonMatch[0].replace(/\);$/, ''));
           } catch (e) {
-            this.logger.warn('Failed to parse JSON from script tag:', e.message);
+            botLogger.warn('Gagal parsing JSON dari script tag:', e.message);
           }
         }
       });
@@ -445,7 +395,7 @@ class PinterestScraper {
       }
 
       if (pinData.length === 0) {
-        this.logger.info('Falling back to HTML scraping');
+        botLogger.info('Menggunakan fallback ke HTML scraping');
         $('[data-test-id="pin"]').each((i, element) => {
           if (pinData.length >= limit) return false;
 
@@ -466,11 +416,10 @@ class PinterestScraper {
         });
       }
 
-      this.logger.info(`HTTP request found ${pinData.length} pins`);
-      await this.saveResults(pinData, keyword);
+      botLogger.info(`Request HTTP menemukan ${pinData.length} pin`);
       return pinData;
     } catch (error) {
-      this.logger.error('HTTP scraping error:', error.message);
+      botLogger.error('Error scraping HTTP:', error.message);
       throw error;
     }
   }
@@ -479,45 +428,172 @@ class PinterestScraper {
     const results = {};
 
     for (const keyword of keywords) {
-      this.logger.info(`Batch scraping keyword: ${keyword}`);
+      botLogger.info(`Batch scraping kata kunci: ${keyword}`);
       try {
         results[keyword] = await this.scrapePinterest(keyword, limit, options);
       } catch (error) {
-        this.logger.error(`Failed to scrape keyword "${keyword}":`, error.message);
+        botLogger.error(`Gagal scraping kata kunci "${keyword}":`, error.message);
         results[keyword] = { error: error.message };
       }
       await sleep(options.batchDelay || 2000);
     }
 
-    const timestamp = new Date().toISOString().replace(/:/g, '-');
-    const batchResultPath = path.join(this.outputDir, `batch_results_${timestamp}.json`);
-    fs.writeFileSync(batchResultPath, JSON.stringify(results, null, 2));
-    this.logger.info(`Batch scraping completed. Results saved to ${batchResultPath}`);
     return results;
+  }
+
+  async downloadVideo(videoUrl, fileName) {
+    if (!videoUrl) return null;
+
+    try {
+      const response = await axios({
+        method: 'GET',
+        url: videoUrl,
+        responseType: 'arraybuffer'
+      });
+
+      const result = await FileManager.saveFile(
+        Buffer.from(response.data),
+        fileName,
+        'video'
+      );
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      return result.path;
+    } catch (error) {
+      botLogger.warn(`Gagal mengunduh video ${videoUrl}:`, error.message);
+      return null;
+    }
+  }
+
+  getImageExtension(url) {
+    const regex = /\.(jpe?g|png|gif|webp)(?:\?.*)?$/i;
+    const match = url.match(regex);
+    return match ? `.${match[1].toLowerCase()}` : '.jpg';
+  }
+
+  getVideoExtension(url) {
+    const regex = /\.(mp4|webm|mov|avi)(?:\?.*)?$/i;
+    const match = url.match(regex);
+    return match ? `.${match[1].toLowerCase()}` : '.mp4';
+  }
+
+  // Metode baru untuk mendapatkan informasi board
+  async getBoardInfo(boardUrl) {
+    try {
+      const { cookieHeader } = await this.loadCookies();
+      const response = await this.makeRequest(boardUrl, { cookieHeader });
+      const $ = cheerio.load(response.data);
+
+      const boardName = $('[data-test-id="board-name"]').first().text().trim();
+      const pinCount = $('[data-test-id="pin-count"]').first().text().trim();
+      const followers = $('[data-test-id="follower-count"]').first().text().trim();
+      const description = $('[data-test-id="board-description"]').first().text().trim();
+
+      return {
+        name: boardName,
+        pinCount,
+        followers,
+        description,
+        url: boardUrl
+      };
+    } catch (error) {
+      botLogger.error(`Error mendapatkan info board: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Metode baru untuk mendapatkan informasi pengguna
+  async getUserInfo(username) {
+    try {
+      const { cookieHeader } = await this.loadCookies();
+      const userUrl = `https://www.pinterest.com/${username}/`;
+      const response = await this.makeRequest(userUrl, { cookieHeader });
+      const $ = cheerio.load(response.data);
+
+      const fullName = $('[data-test-id="user-name"]').first().text().trim();
+      const bio = $('[data-test-id="user-bio"]').first().text().trim();
+      const followers = $('[data-test-id="follower-count"]').first().text().trim();
+      const following = $('[data-test-id="following-count"]').first().text().trim();
+      const boards = $('[data-test-id="board-count"]').first().text().trim();
+
+      return {
+        username,
+        fullName,
+        bio,
+        followers,
+        following,
+        boards,
+        url: userUrl
+      };
+    } catch (error) {
+      botLogger.error(`Error mendapatkan info pengguna: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Metode baru untuk mendapatkan pin terkait
+  async getRelatedPins(pinId, limit = 10) {
+    try {
+      const { cookieHeader } = await this.loadCookies();
+      const pinUrl = `https://www.pinterest.com/pin/${pinId}/`;
+      const response = await this.makeRequest(pinUrl, { cookieHeader });
+      const $ = cheerio.load(response.data);
+
+      const relatedPins = [];
+      $('[data-test-id="related-pin"]').each((i, element) => {
+        if (relatedPins.length >= limit) return false;
+
+        const pinId = $(element).attr('data-pin-id');
+        const imageUrl = $(element).find('img').first().attr('src');
+        const description = $(element).find('[data-test-id="pin-description"]').text().trim();
+
+        relatedPins.push({
+          id: pinId,
+          imageUrl: imageUrl ? imageUrl.replace(/\/236x\//, '/originals/') : null,
+          description,
+          pinUrl: `https://www.pinterest.com/pin/${pinId}/`
+        });
+      });
+
+      return relatedPins;
+    } catch (error) {
+      botLogger.error(`Error mendapatkan pin terkait: ${error.message}`);
+      throw error;
+    }
+  }
+
+  // Metode baru untuk mendapatkan trending pins
+  async getTrendingPins(limit = 10) {
+    try {
+      const { cookieHeader } = await this.loadCookies();
+      const response = await this.makeRequest('https://www.pinterest.com/trending/', { cookieHeader });
+      const $ = cheerio.load(response.data);
+
+      const trendingPins = [];
+      $('[data-test-id="pin"]').each((i, element) => {
+        if (trendingPins.length >= limit) return false;
+
+        const pinId = $(element).attr('data-pin-id');
+        const imageUrl = $(element).find('img').first().attr('src');
+        const description = $(element).find('[data-test-id="pin-description"]').text().trim();
+
+        trendingPins.push({
+          id: pinId,
+          imageUrl: imageUrl ? imageUrl.replace(/\/236x\//, '/originals/') : null,
+          description,
+          pinUrl: `https://www.pinterest.com/pin/${pinId}/`
+        });
+      });
+
+      return trendingPins;
+    } catch (error) {
+      botLogger.error(`Error mendapatkan trending pins: ${error.message}`);
+      throw error;
+    }
   }
 }
 
-(async () => {
-  try {
-    const scraper = new PinterestScraper({
-      cookiePath: 'cookie.json',
-      outputDir: 'pinterest_output',
-      downloadImages: true,
-      outputFormat: 'json',
-      rateLimitDelay: 1000,
-      maxRetries: 3,
-      logLevel: 'info',
-      headless: true,
-      proxyList: []
-    });
-
-    const results = await scraper.scrapePinterest('wallpaper aesthetic', 20, {
-      useBrowser: true,
-      fetchAdditionalDetails: true
-    });
-
-    console.log(`Scraped ${results.length} pins`);
-  } catch (error) {
-    console.error('Scraper error:', error.message);
-  }
-})();
+module.exports = PinterestScraper;

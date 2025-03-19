@@ -1,20 +1,26 @@
 const { downloadFbVideo, getFbVideoInfo } = require("../lib/fbDownloader");
 const { formatBytes } = require("../utils/helper");
+const path = require('path');
+const fs = require('fs');
+const { promisify } = require('util');
+const { pipeline } = require('stream');
+const streamPipeline = promisify(pipeline);
+const axios = require('axios');
 
 // src/commands/downloader.js
 const { botLogger } = require("../utils/logger");
 const {
   cekKhodam,
-  tiktokDl,
-  tiktokDlV2,
   igDl,
   ytv,
   yta,
 } = require("../lib/scrapperV2");
+// Ganti dengan modul TikTok downloader baru
+const { downloadTikTok, downloadTikTokV2, downloadTikTokV3 } = require('../lib/tiktokDownloader');
 const fileManager = require("../../config/memoryAsync/readfile"); // Impor instance langsung dari filemanager.js
 const { exec: youtubeDlExec } = require("youtube-dl-exec");
-const fs = require("fs");
 const fetch = require("node-fetch");
+
 function formatDuration(seconds) {
   const hrs = Math.floor(seconds / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
@@ -23,6 +29,32 @@ function formatDuration(seconds) {
     secs < 10 ? "0" + secs : secs
   }`;
 }
+
+// Fungsi helper untuk memastikan folder ada
+function ensureDirectoryExists(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    botLogger.info(`Direktori ${dirPath} dibuat`);
+  }
+  return dirPath;
+}
+
+// Fungsi untuk download file
+async function downloadFile(url, filePath) {
+  // Pastikan direktori ada
+  ensureDirectoryExists(path.dirname(filePath));
+  
+  // Download file
+  const response = await axios({
+    method: 'GET',
+    url: url,
+    responseType: 'stream'
+  });
+  
+  await streamPipeline(response.data, fs.createWriteStream(filePath));
+  return filePath;
+}
+
 // Command: cekKhodam
 global.Oblixn.cmd({
   name: "cekkhodam",
@@ -45,38 +77,50 @@ global.Oblixn.cmd({
   },
 });
 
-// Command: tiktokDl
-global.Oblixn.cmd({
-  name: "tiktokdl",
-  alias: ["ttdl", "tiktok"],
-  desc: "Download video TikTok (metode 1)",
+// Command untuk download TikTok
+Oblixn.cmd({
+  name: "tiktok",
+  alias: ["tt", "tiktokdl"],
+  desc: "Download video TikTok",
   category: "downloader",
   async exec(msg, { args }) {
     try {
       if (!args[0]) {
-        return await msg.reply("Masukkan URL TikTok! Contoh: !tiktokdl <url>");
+        return msg.reply("Masukkan URL video TikTok!");
       }
+
       const url = args[0];
-      const result = await tiktokDl(url);
-      if (result.code !== 0) {
-        return await msg.reply(
-          `Gagal mendownload: ${result.msg || "Unknown error"}`
-        );
+      let result;
+
+      // Coba metode download satu per satu
+      try {
+        result = await downloadTikTok(url);
+      } catch (error) {
+        try {
+          result = await downloadTikTokV2(url);
+        } catch (error) {
+          result = await downloadTikTokV3(url);
+        }
       }
-      const videoUrl = result.data.play || result.data.hdplay;
-      await msg.sock.sendMessage(
-        msg.chat,
-        {
-          video: { url: videoUrl },
-          caption: `Judul: ${result.data.title}\nAuthor: ${result.data.author.nickname}`,
-        },
-        { quoted: msg }
-      );
+
+      if (!result || result.code === -1) {
+        return msg.reply("Gagal mendapatkan video TikTok!");
+      }
+
+      // Kirim video
+      if (result.data && result.data.play) {
+        await msg.reply({
+          video: { url: result.data.play },
+          caption: `*TikTok Downloader*\n\n*Judul:* ${result.data.title || "Tidak ada judul"}\n*Author:* ${result.data.author || "Unknown"}\n*Durasi:* ${result.data.duration || "Unknown"}\n*Ukuran:* ${result.data.size || "Unknown"}`
+        });
+      } else {
+        return msg.reply("Video tidak ditemukan!");
+      }
     } catch (error) {
-      botLogger.error("Error di command tiktokdl:", error);
-      await msg.reply(`Terjadi kesalahan: ${error.message || "Unknown error"}`);
+      botLogger.error(`Error saat download TikTok: ${error.message}`);
+      return msg.reply("Terjadi kesalahan saat download video TikTok!");
     }
-  },
+  }
 });
 
 // Command: tiktokDlV2
@@ -90,38 +134,121 @@ global.Oblixn.cmd({
       if (!args[0]) {
         return await msg.reply("Masukkan URL TikTok! Contoh: !tiktokdl2 <url>");
       }
+      
+      await msg.reply("⌛ Sedang memproses video menggunakan @tobyg74/tiktok-api-dl (metode alternatif)...");
       const url = args[0];
-      const result = await tiktokDlV2(url);
-      if (result.status !== 200) {
-        return await msg.reply(
-          `Gagal mendownload: ${result.msg || "Unknown error"}`
-        );
+      
+      // Log untuk debugging
+      botLogger.info(`Mendownload TikTok (metode v2) dari URL: ${url}`);
+      
+      // Download TikTok dengan modul baru
+      const result = await downloadTikTokV2(url);
+      
+      if (!result.success) {
+        return await msg.reply(`Gagal mendownload: ${result.error || "Unknown error"}`);
       }
-      if (result.isSlide) {
-        for (const slideUrl of result.media) {
+      
+      try {
+        if (result.isSlide) {
+          await msg.reply(`Ditemukan ${result.slides.length} slide gambar, mengirim...`);
+          // Kirim slide/gambar
+          for (const slide of result.slides) {
+            if (slide.success) {
+              await msg.sock.sendMessage(
+                msg.chat,
+                {
+                  image: fs.readFileSync(slide.imagePath),
+                  caption: `Judul: ${result.title} (${slide.index + 1}/${slide.total})`,
+                },
+                { quoted: msg }
+              );
+              
+              // Hapus file setelah dikirim
+              fs.unlinkSync(slide.imagePath);
+            } else {
+              // Fallback jika satu slide gagal
+              await msg.sock.sendMessage(
+                msg.chat,
+                {
+                  image: { url: slide.url },
+                  caption: `Judul: ${result.title} (${slide.index + 1}/${slide.total})`,
+                },
+                { quoted: msg }
+              );
+            }
+          }
+        } else {
+          // Kirim video
           await msg.sock.sendMessage(
             msg.chat,
             {
-              image: { url: slideUrl },
+              video: fs.readFileSync(result.videoPath),
               caption: `Judul: ${result.title}`,
             },
             { quoted: msg }
           );
+          
+          // Hapus file setelah dikirim
+          fs.unlinkSync(result.videoPath);
         }
-      } else {
-        const videoUrl =
-          result.media.hd || result.media.no_wm || result.media.watermark;
+        
+        botLogger.info(`Media berhasil dikirim dan dihapus dari storage`);
+      } catch (sendError) {
+        botLogger.error(`Error saat mengirim media: ${sendError.message}`, sendError);
+        await msg.reply(`Terjadi kesalahan saat mengirim media: ${sendError.message}`);
+      }
+    } catch (error) {
+      botLogger.error(`Error di command tiktokdl2: ${error.message}`, error);
+      await msg.reply(`Terjadi kesalahan: ${error.message || "Unknown error"}`);
+    }
+  },
+});
+
+// Command: tiktokDlV3
+global.Oblixn.cmd({
+  name: "tiktokdl3",
+  alias: ["ttdl3", "tiktok3"],
+  desc: "Download video TikTok (metode 3 - MusicalDown)",
+  category: "downloader",
+  async exec(msg, { args }) {
+    try {
+      if (!args[0]) {
+        return await msg.reply("Masukkan URL TikTok! Contoh: !tiktokdl3 <url>");
+      }
+      
+      await msg.reply("⌛ Sedang memproses video menggunakan metode MusicalDown...");
+      const url = args[0];
+      
+      // Log untuk debugging
+      botLogger.info(`Mendownload TikTok (metode v3) dari URL: ${url}`);
+      
+      // Download TikTok dengan metode v3
+      const result = await downloadTikTokV3(url);
+      
+      if (!result.success) {
+        return await msg.reply(`Gagal mendownload: ${result.error || "Unknown error"}`);
+      }
+      
+      try {
+        // Kirim video
         await msg.sock.sendMessage(
           msg.chat,
           {
-            video: { url: videoUrl },
+            video: fs.readFileSync(result.videoPath),
             caption: `Judul: ${result.title}`,
           },
           { quoted: msg }
         );
+        
+        // Hapus file setelah dikirim
+        fs.unlinkSync(result.videoPath);
+        botLogger.info(`Media berhasil dikirim dan dihapus dari storage`);
+      } catch (sendError) {
+        botLogger.error(`Error saat mengirim media: ${sendError.message}`, sendError);
+        await msg.reply(`Terjadi kesalahan saat mengirim media: ${sendError.message}`);
       }
     } catch (error) {
-      botLogger.error("Error di command tiktokdl2:", error);
+      botLogger.error(`Error di command tiktokdl3: ${error.message}`, error);
       await msg.reply(`Terjadi kesalahan: ${error.message || "Unknown error"}`);
     }
   },
