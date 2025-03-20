@@ -1,7 +1,7 @@
 const { botLogger } = require("../utils/logger");
 const db = require("../../database/confLowDb/lowdb"); // Impor dari lowdb.js yang menggunakan AJV
 const { groupCache } = require("../../config/config");
-const { createWelcomeText, createGoodbyeText } = require("../lib/welcomeNgoodbyemsg");
+const { createWelcomeImage, createGoodbyeImage, handleGroupJoin, handleGroupLeave } = require("../lib/welcomeNgoodbyemsg");
 const path = require("path");
 const fileManager = require("../../config/memoryAsync/readfile");
 
@@ -36,56 +36,50 @@ async function handleGroupMessage(sock, msg) {
     if (!groupMetadata) {
       try {
         groupMetadata = await sock.groupMetadata(chat);
-        if (
-          !groupMetadata ||
-          !groupMetadata.participants ||
-          !Array.isArray(groupMetadata.participants)
-        ) {
-          throw new Error("Metadata grup tidak lengkap atau tidak tersedia.");
-        }
         groupCache.set(chat, groupMetadata);
-        botLogger.info("Metadata grup berhasil diambil:", {
-          subject: groupMetadata.subject,
-          participantsCount: groupMetadata.participants.length,
-        });
       } catch (error) {
-        botLogger.error(`Error mendapatkan metadata grup: ${error.message}`, {
-          chat,
-          errorStack: error.stack,
-        });
-        const lastSent = errorSentTracker.get(chat);
-        if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
-          // 5 menit cooldown
-          await reply(
-            "Terjadi kesalahan saat mengakses informasi grup. Silakan coba lagi nanti."
-          );
-          errorSentTracker.set(chat, Date.now());
-        }
-        return;
+        const errorMsg = `Gagal mengambil metadata grup: ${error.message}`;
+        botLogger.error(errorMsg);
+        throw new Error(errorMsg);
       }
     }
 
-    // Validasi groupMetadata sebelum digunakan
-    if (!groupMetadata || !Array.isArray(groupMetadata.participants)) {
-      botLogger.error("Group metadata tidak valid:", {
-        groupMetadata: groupMetadata ? groupMetadata : "undefined",
-        hasParticipants:
-          groupMetadata && Array.isArray(groupMetadata.participants)
-            ? groupMetadata.participants.length > 0
-            : false,
-        isArray: Array.isArray(groupMetadata?.participants),
-      });
-      const lastSent = errorSentTracker.get(chat);
-      if (!lastSent || Date.now() - lastSent > 5 * 60 * 1000) {
-        // 5 menit cooldown
-        await reply("Data grup tidak valid. Silakan coba lagi nanti.");
-        errorSentTracker.set(chat, Date.now());
+    // Siapkan data grup
+    const group = await db.getGroup(chat);
+    if (!group) {
+      try {
+        // Jika grup tidak ada di database, tambahkan
+        const groupData = {
+          group_id: chat,
+          group_name: groupMetadata.subject,
+          is_active: true,
+          welcome_message: 1, // Aktifkan welcome message secara default
+          features: {
+            antilink: false,
+            antispam: false,
+            autokick: false,
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        await db.addGroup(groupData);
+        botLogger.info(`Grup ${groupMetadata.subject} (${chat}) ditambahkan ke database`);
+      } catch (error) {
+        botLogger.error(`Gagal menambahkan grup ke database: ${error.message}`);
       }
+    }
+
+    // Periksa apakah pesan ini adalah notifikasi admin (promosi/demosi)
+    if (msg.messageStubType === 29 || msg.messageStubType === 30) {
+      // 29 = PROMOTE, 30 = DEMOTE
+      const action = msg.messageStubType === 29 ? "menjadi admin" : "dihapus sebagai admin";
+      const targetUser = msg.messageStubParameters[0];
+      const userName = targetUser.split("@")[0];
+      await reply(`@${userName} telah ${action} 🎭`, {
+        mentions: [targetUser],
+      });
       return;
     }
-
-    // Reset tracker jika metadata valid
-    errorSentTracker.delete(chat);
 
     // Log pesan grup
     const logMessage = {
@@ -133,62 +127,39 @@ async function handleGroupMessage(sock, msg) {
       }
     }
 
-    // Handle welcome dan goodbye message
-    if (msg.key.participant && msg.messageStubType) {
+    // Handle group participant updates (join/leave)
+    if (msg.messageStubType) {
       const group = await db.getGroup(chat);
-      if (!group) return;
-
-      const isWelcomeEnabled = group.welcome_message === 1;
-      if (!isWelcomeEnabled) return;
-
-      const action = msg.messageStubType === 28 ? "welcome" : "goodbye"; // 28 = GROUP_PARTICIPANT_ADD
-      const backgroundPath = path.join(__dirname, '../assets/background.png');
-
-      try {
-        // Cek keberadaan file background
-        const backgroundExists = await fileManager.fileExists(backgroundPath);
-        if (!backgroundExists) {
-          throw new Error('File background tidak ditemukan');
-        }
-
-        let imagePath;
-        if (action === "welcome") {
-          imagePath = await createWelcomeText(backgroundPath);
-        } else {
-          imagePath = await createGoodbyeText(backgroundPath);
-        }
-
-        if (!imagePath) {
-          throw new Error(`Gagal membuat gambar ${action}`);
-        }
-
-        // Cek keberadaan file gambar yang dibuat
-        const imageExists = await fileManager.fileExists(imagePath);
-        if (!imageExists) {
-          throw new Error('File gambar tidak ditemukan');
-        }
-
-        // Kirim gambar dengan caption
-        const caption = action === "welcome" 
-          ? `Selamat datang @${userId} di ${groupMetadata.subject}! 🌸`
-          : `Selamat tinggal @${userId} dari ${groupMetadata.subject}! 👋`;
-
-        await sock.sendMessage(chat, {
-          image: await fileManager.readFile(imagePath),
-          caption: caption,
-          mentions: [sender]
-        });
-
-        // Hapus file gambar setelah dikirim
-        await fileManager.deleteFile(imagePath);
-      } catch (error) {
-        botLogger.error(`Error creating ${action} message:`, error);
-        // Fallback ke pesan teks jika gagal membuat gambar
-        await reply(
-          `@${userId} telah ${action === "welcome" ? "bergabung" : "keluar"} dari grup ${groupMetadata.subject}!`
-        );
+      
+      // Keluar jika fitur welcome/goodbye tidak diaktifkan
+      if (!group || group.welcome_message !== 1) return;
+      
+      switch (msg.messageStubType) {
+        case 27: // GROUP_PARTICIPANT_LEAVE
+        case 28: // GROUP_PARTICIPANT_ADD
+          try {
+            if (msg.messageStubType === 28) {
+              // Handle join/welcome
+              await handleGroupJoin(sock, msg);
+            } else if (msg.messageStubType === 27) {
+              // Handle leave/goodbye
+              await handleGroupLeave(sock, msg);
+            }
+          } catch (error) {
+            botLogger.error(`Error handling group ${msg.messageStubType === 28 ? 'join' : 'leave'} event:`, error);
+            
+            // Fallback ke pesan teks jika gagal membuat gambar
+            const targetUser = msg.messageStubParameters[0];
+            const userName = targetUser.split("@")[0];
+            const action = msg.messageStubType === 28 ? "bergabung" : "keluar";
+            
+            await reply(
+              `@${userName} telah ${action} dari grup ${groupMetadata.subject}!`,
+              { mentions: [targetUser] }
+            );
+          }
+          return;
       }
-      return;
     }
   } catch (error) {
     const errorLog = {

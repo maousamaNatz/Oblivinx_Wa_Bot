@@ -1,6 +1,7 @@
 const { botLogger } = require('../utils/logger');
 const { PREFIX, commands } = require('../../config/config');
 const { handleGroupMessage } = require('../handler/groupHandler');
+const { handleGroupJoin, handleGroupLeave } = require('../lib/welcomeNgoodbyemsg');
 
 /**
  * Menangani pesan yang masuk baik dari pribadi maupun grup.
@@ -28,92 +29,89 @@ async function handleMessage(client, message) {
     botLogger.info(`Isi pesan: "${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}"`);
     botLogger.info(`Detail pesan: ${JSON.stringify(message.message, null, 2)}`);
     
+    // Jika pesan berasal dari grup
+    if (message.isGroup) {
+      // Cek apakah ini adalah event grup (join/leave)
+      if (message.messageStubType) {
+        switch (message.messageStubType) {
+          case 27: // GROUP_PARTICIPANT_LEAVE
+            await handleGroupLeave(client, message);
+            return;
+          case 28: // GROUP_PARTICIPANT_ADD
+            await handleGroupJoin(client, message);
+            return;
+          default:
+            // Lanjutkan dengan handleGroupMessage untuk event grup lainnya
+            break;
+        }
+      }
+      
+      // Jika pesan dimulai dengan PREFIX, ini adalah perintah
+      if (messageText.startsWith(PREFIX)) {
+        botLogger.info(`Pesan grup dimulai dengan ${PREFIX}, mungkin perintah`);
+        const args = messageText.slice(PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
+        
+        if (commands.has(command)) {
+          botLogger.info(`Perintah ${command} dikenali, mengeksekusi`);
+          try {
+            await commands.get(command).execute(client, message, args);
+          } catch (error) {
+            botLogger.error(`Gagal mengeksekusi perintah ${command}: ${error.message}`);
+            await message.reply(`Terjadi kesalahan saat menjalankan perintah ${command}`);
+          }
+          return;
+        }
+      }
+      
+      // Jika bukan perintah yang dikenali, tangani sebagai pesan grup biasa
+      botLogger.info(`Memanggil handleGroupMessage untuk chat: ${chat}`);
+      await handleGroupMessage(client, message);
+      return;
+    }
+    
     // Jika pesan kosong, keluar
     if (!messageText) {
       botLogger.debug('Pesan kosong, dilewati');
       return;
     }
     
-    // Jika pesan berasal dari grup, gunakan handleGroupMessage
-    if (message.isGroup) {
-      botLogger.info(`Pesan berasal dari grup, memanggil handleGroupMessage untuk chat: ${chat}`);
-      await handleGroupMessage(client, message);
-      return;
-    }
-    
-    // Parsing perintah
+    // Parsing perintah untuk pesan pribadi
     const args = messageText.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
     
-    botLogger.info(`Menjalankan perintah: ${command} dengan argumen: ${args.join(', ')}`);
-    
-    // Cari perintah yang cocok
-    let foundCommand = false;
-    
-    // Cek di commands dari config
-    for (const cmd of commands) {
-      const pattern = new RegExp(cmd.config.pattern);
-      if (pattern.test(command)) {
-        botLogger.info(`Menemukan perintah yang cocok: ${command}`);
+    // Cek apakah pesan dimulai dengan prefix
+    if (messageText.startsWith(PREFIX)) {
+      botLogger.info(`Pesan pribadi dimulai dengan ${PREFIX}, mungkin perintah`);
+      
+      // Cek apakah perintah ada dalam daftar
+      if (commands.has(command)) {
+        botLogger.info(`Perintah ${command} dikenali, mengeksekusi`);
         try {
-          await cmd.handler(client, message, args);
-          foundCommand = true;
-          botLogger.info(`Perintah ${command} berhasil dijalankan.`);
-          break;
+          await commands.get(command).execute(client, message, args);
         } catch (error) {
-          botLogger.error(`Error menjalankan perintah ${command}: ${error.message}`);
-          await message.reply(`Terjadi kesalahan saat menjalankan perintah: ${error.message}`);
-        }
-      }
-    }
-    
-    // Cek di global.Oblixn.commands jika tidak ditemukan di commands
-    if (!foundCommand && global.Oblixn && global.Oblixn.commands) {
-      if (global.Oblixn.commands.has(command)) {
-        botLogger.info(`Menemukan perintah di Oblixn: ${command}`);
-        const cmd = global.Oblixn.commands.get(command);
-        try {
-          await cmd.exec(message, { args });
-          foundCommand = true;
-          botLogger.info(`Perintah Oblixn ${command} berhasil dijalankan.`);
-        } catch (error) {
-          botLogger.error(`Error menjalankan perintah Oblixn ${command}: ${error.message}`);
-          await message.reply(`Terjadi kesalahan saat menjalankan perintah: ${error.message}`);
+          botLogger.error(`Gagal mengeksekusi perintah ${command}: ${error.message}`);
+          await message.reply(`Terjadi kesalahan saat menjalankan perintah ${command}`);
         }
       } else {
-        // Cek alias
-        for (const [cmdName, cmdObj] of global.Oblixn.commands.entries()) {
-          if (cmdObj.alias && cmdObj.alias.includes(command)) {
-            botLogger.info(`Menemukan alias untuk perintah ${cmdName}: ${command}`);
-            try {
-              await cmdObj.exec(message, { args });
-              foundCommand = true;
-              botLogger.info(`Perintah alias ${cmdName} berhasil dijalankan.`);
-              break;
-            } catch (error) {
-              botLogger.error(`Error menjalankan perintah alias ${command}: ${error.message}`);
-              await message.reply(`Terjadi kesalahan saat menjalankan perintah: ${error.message}`);
-            }
-          }
-        }
+        botLogger.info(`Perintah ${command} tidak dikenali`);
+        await message.reply(`Perintah ${command} tidak dikenali, ketik ${PREFIX}help untuk melihat daftar perintah.`);
+      }
+    } else {
+      // Tangani pesan biasa (non-perintah)
+      botLogger.info(`Pesan biasa dari ${sender}: ${messageText.substring(0, 30)}${messageText.length > 30 ? '...' : ''}`);
+      
+      // Di sini Anda bisa menambahkan logika untuk menanggapi pesan biasa
+      if (messageText.toLowerCase().includes('hai') || messageText.toLowerCase().includes('halo')) {
+        await message.reply(`Hai ${message.pushName || 'kak'}! Ada yang bisa saya bantu? Ketik ${PREFIX}help untuk melihat daftar perintah.`);
       }
     }
-    
-    // Jika perintah tidak ditemukan
-    if (!foundCommand) {
-      botLogger.warn(`Perintah tidak ditemukan: ${command}`);
-      await message.reply(`Maaf, perintah *${command}* tidak ditemukan. Gunakan ${PREFIX}help untuk melihat daftar perintah.`);
-    }
-    
   } catch (error) {
-    botLogger.error(`Error dalam handleMessage: ${error.message}`);
-    console.error(error); // Tampilkan stack trace lengkap
-    
-    // Coba kirim pesan error ke pengirim
+    botLogger.error(`Error di handleMessage: ${error.message}`, error);
     try {
-      await message.reply('Terjadi kesalahan saat memproses pesan Anda. Silakan coba lagi nanti.');
+      await message.reply('Terjadi kesalahan saat memproses pesan Anda.');
     } catch (replyError) {
-      botLogger.error(`Gagal mengirim pesan error: ${replyError.message}`);
+      botLogger.error(`Tidak dapat mengirim pesan error: ${replyError.message}`);
     }
   }
 }

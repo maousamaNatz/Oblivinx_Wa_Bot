@@ -1,10 +1,21 @@
 const path = require('path');
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const fileManager = require('../../config/memoryAsync/readfile');
+const fs = require('fs').promises;
+const { botLogger } = require('../utils/logger');
 
 // Daftarkan font kustom dengan penanganan error
 try {
   registerFont(path.join(__dirname, '../assets/fonts/Montserrat-Black.ttf'), {
+    family: 'Montserrat-Black'
+  });
+  registerFont(path.join(__dirname, '../assets/fonts/Montserrat-Bold.ttf'), {
+    family: 'Montserrat-Bold'
+  });
+  registerFont(path.join(__dirname, '../assets/fonts/Montserrat-Medium.ttf'), {
+    family: 'Montserrat-Medium'
+  });
+  registerFont(path.join(__dirname, '../assets/fonts/Montserrat-Regular.ttf'), {
     family: 'Montserrat'
   });
 } catch (error) {
@@ -12,45 +23,259 @@ try {
   // Gunakan font default jika gagal mendaftarkan font kustom
 }
 
-async function createWelcomeText(backgroundPath) {
+/**
+ * Menggambar bunga untuk background gambar
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {number} x - Posisi x
+ * @param {number} y - Posisi y
+ * @param {number} radius - Radius bunga
+ * @param {string} color - Warna bunga
+ * @param {number} petalCount - Jumlah kelopak
+ */
+function drawFlower(ctx, x, y, radius, color, petalCount) {
+  // Gambar kelopak
+  ctx.save();
+  ctx.fillStyle = color;
+  
+  for (let i = 0; i < petalCount; i++) {
+    ctx.beginPath();
+    const angle = (i * 2 * Math.PI) / petalCount;
+    const petalRadius = radius * 0.7;
+    ctx.ellipse(
+      x + Math.cos(angle) * radius * 0.5,
+      y + Math.sin(angle) * radius * 0.5,
+      petalRadius,
+      petalRadius / 2,
+      angle,
+      0,
+      2 * Math.PI
+    );
+    ctx.fill();
+  }
+  
+  // Gambar pusat bunga
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.3, 0, 2 * Math.PI);
+  ctx.fillStyle = '#1e3799';
+  ctx.fill();
+  
+  // Gambar detail pusat bunga
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  
+  for (let i = 0; i < 12; i++) {
+    const angle = (i * 2 * Math.PI) / 12;
+    const startX = x + Math.cos(angle) * radius * 0.3;
+    const startY = y + Math.sin(angle) * radius * 0.3;
+    const endX = x + Math.cos(angle) * radius * 0.5;
+    const endY = y + Math.sin(angle) * radius * 0.5;
+    
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    
+    // Buat titik di ujung
+    ctx.beginPath();
+    ctx.arc(endX, endY, 2, 0, 2 * Math.PI);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
+  
+  ctx.restore();
+}
+
+/**
+ * Menggambar daun
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {number} x - Posisi x
+ * @param {number} y - Posisi y
+ * @param {number} size - Ukuran daun
+ * @param {string} color - Warna daun
+ * @param {number} angle - Sudut rotasi
+ */
+function drawLeaf(ctx, x, y, size, color, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(
+    size * 0.4, -size * 0.5,
+    size * 0.8, -size * 0.3,
+    size, 0
+  );
+  ctx.bezierCurveTo(
+    size * 0.8, size * 0.3,
+    size * 0.4, size * 0.5,
+    0, 0
+  );
+  
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Menggambar ikon media sosial
+ * @param {CanvasRenderingContext2D} ctx - Canvas context
+ * @param {number} centerX - Posisi x tengah
+ * @param {number} y - Posisi y
+ * @param {number} size - Ukuran ikon
+ */
+function drawSocialIcons(ctx, centerX, y, size) {
+  const gap = size * 1.5;
+  const startX = centerX - gap;
+  
+  // Facebook
+  ctx.beginPath();
+  ctx.arc(startX, y, size/2, 0, 2 * Math.PI);
+  ctx.fillStyle = '#1877f2';
+  ctx.fill();
+  
+  // Simbol F
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${size * 0.6}px "Montserrat-Bold", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('f', startX, y);
+  
+  // Twitter
+  ctx.beginPath();
+  ctx.arc(centerX, y, size/2, 0, 2 * Math.PI);
+  ctx.fillStyle = '#1da1f2';
+  ctx.fill();
+  
+  // Simbol Twitter
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${size * 0.6}px "Montserrat-Bold", sans-serif`;
+  ctx.fillText('t', centerX, y);
+  
+  // YouTube
+  ctx.beginPath();
+  ctx.arc(centerX + gap, y, size/2, 0, 2 * Math.PI);
+  ctx.fillStyle = '#ff0000';
+  ctx.fill();
+  
+  // Simbol YouTube
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${size * 0.6}px "Montserrat-Bold", sans-serif`;
+  ctx.fillText('YT', centerX + gap, y);
+}
+
+/**
+ * Membuat gambar welcome dengan informasi user dan grup
+ * @param {string} backgroundPath - Path ke gambar background
+ * @param {object} userInfo - Informasi user yang join
+ * @param {string} userInfo.name - Nama user
+ * @param {string} userInfo.jid - JID user
+ * @param {string} userInfo.ppUrl - URL foto profil user (opsional)
+ * @param {object} groupInfo - Informasi grup
+ * @param {string} groupInfo.name - Nama grup
+ * @param {number} groupInfo.memberCount - Jumlah anggota grup
+ * @returns {Promise<string>} - Path ke gambar hasil
+ */
+async function createWelcomeImage(backgroundPath, userInfo, groupInfo) {
   try {
-    // Load background image dengan penanganan error
-    let backgroundImage;
-    try {
-      backgroundImage = await loadImage(backgroundPath);
-    } catch (error) {
-      console.error('Error loading background image:', error);
-      throw new Error('Gagal memuat gambar background');
+    // Tambahkan definisi now
+    const now = new Date();
+    
+    // Gunakan background.jpg sebagai background
+    if (!backgroundPath) {
+      backgroundPath = path.join(__dirname, '../assets/background/background.jpg');
     }
     
+    // Cek apakah background ada
+    try {
+      await fs.access(backgroundPath);
+    } catch (error) {
+      botLogger.warn(`Background image not found at ${backgroundPath}, creating floral template`);
+      // Buat background custom dengan bunga jika tidak ada file
+      const canvas = createCanvas(1920, 600);
+      const ctx = canvas.getContext('2d');
+      
+      // Background putih
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Gambar bunga di sebelah kiri
+      drawFlower(ctx, 120, 150, 70, '#ffd32a', 8); // Bunga kuning
+      drawFlower(ctx, 210, 240, 80, '#ff793f', 8); // Bunga oranye
+      drawFlower(ctx, 100, 300, 60, '#ff4757', 8); // Bunga merah
+      drawFlower(ctx, 220, 120, 50, '#ff6b81', 8); // Bunga pink
+      
+      // Gambar daun kiri
+      drawLeaf(ctx, 50, 150, 120, '#1e3799', -0.5);
+      drawLeaf(ctx, 30, 250, 100, '#1e3799', -0.2);
+      drawLeaf(ctx, 100, 350, 80, '#1e3799', 0.3);
+      
+      // Gambar bunga kanan
+      drawFlower(ctx, canvas.width - 120, 150, 70, '#ffd32a', 8);
+      drawFlower(ctx, canvas.width - 210, 240, 80, '#ff793f', 8);
+      drawFlower(ctx, canvas.width - 100, 300, 60, '#ff4757', 8);
+      drawFlower(ctx, canvas.width - 220, 120, 50, '#ff6b81', 8);
+      
+      // Gambar daun kanan
+      drawLeaf(ctx, canvas.width - 50, 150, 120, '#1e3799', 0.5);
+      drawLeaf(ctx, canvas.width - 30, 250, 100, '#1e3799', 0.2);
+      drawLeaf(ctx, canvas.width - 100, 350, 80, '#1e3799', -0.3);
+      
+      // Simpan background custom
+      const buffer = canvas.toBuffer('image/jpeg');
+      backgroundPath = path.join(__dirname, '../assets/background/background.jpg');
+      await fs.mkdir(path.dirname(backgroundPath), { recursive: true });
+      await fs.writeFile(backgroundPath, buffer);
+    }
+
+    // Load background image
+    const backgroundImage = await loadImage(backgroundPath);
+    
     // Buat canvas dengan ukuran yang sama dengan background
-    const canvas = createCanvas(1920, 480);
+    const canvas = createCanvas(backgroundImage.width, backgroundImage.height);
     const ctx = canvas.getContext('2d');
     
     // Gambar background
     ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
     
-    // Atur style untuk teks "WELCOME"
-    ctx.font = '72px "Montserrat"'; // Gunakan font yang sudah didaftarkan
-    ctx.fillStyle = '#FFD700'; // Warna kuning untuk "WELCOME"
-    const welcomeText = 'WELCOME';
-    const welcomeTextWidth = ctx.measureText(welcomeText).width;
+    // Teks "WELCOME" dengan warna kuning - ukuran font dikurangi
+    ctx.font = `bold ${canvas.height / 7}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffc312'; // Warna kuning untuk "WELCOME"
+    ctx.fillText('WELCOME', canvas.width / 2, canvas.height / 3);
     
-    // Posisikan teks "WELCOME" di tengah
-    ctx.fillText(welcomeText, (canvas.width - welcomeTextWidth) / 2, 200);
+    // Atur style untuk nama user - ukuran font dikurangi
+    ctx.font = `bold ${canvas.height / 4}px Arial, sans-serif`;
+    ctx.fillStyle = '#273c75'; // Warna biru untuk nama user
+    ctx.fillText(userInfo.name || 'User', canvas.width / 2, canvas.height / 1.5);
     
-    // Atur style untuk teks "Spring"
-    ctx.font = '120px "Montserrat"'; // Gunakan font yang sudah didaftarkan
-    ctx.fillStyle = '#1E90FF'; // Warna biru untuk "Spring"
-    const springText = 'Spring';
-    const springTextWidth = ctx.measureText(springText).width;
+    // Menghilangkan ikon sosial media
     
-    // Posisikan teks "Spring" di tengah
-    ctx.fillText(springText, (canvas.width - springTextWidth) / 2, 300);
+    // Coba load foto profil user jika ada dan gambar kecil di pojok
+    let profileImage;
+    try {
+      if (userInfo.ppUrl) {
+        profileImage = await loadImage(userInfo.ppUrl);
+        
+        // Gambar foto profil kecil di pojok kiri atas sejajar dengan bunga
+        const profileSize = canvas.height / 8;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(profileSize, profileSize, profileSize / 2, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(profileImage, profileSize * 0.5, profileSize / 2, profileSize, profileSize);
+        ctx.restore();
+      }
+    } catch (error) {
+      botLogger.error('Error loading profile image:', error);
+      // Lanjutkan tanpa foto profil
+    }
     
     // Simpan hasil menggunakan FileManager
     const buffer = canvas.toBuffer('image/png');
-    const result = await fileManager.saveFile(buffer, 'welcome.png', 'temp');
+    const fileName = `welcome_${Date.now()}.png`;
+    const result = await fileManager.saveFile(buffer, fileName, 'temp');
     
     if (!result.success) {
       throw new Error(result.error);
@@ -58,50 +283,99 @@ async function createWelcomeText(backgroundPath) {
     
     return result.path;
   } catch (error) {
-    console.error('Error creating welcome text:', error);
+    botLogger.error('Error creating welcome image:', error);
     throw error;
   }
 }
 
-async function createGoodbyeText(backgroundPath) {
+/**
+ * Membuat gambar goodbye dengan informasi user dan grup
+ * @param {string} backgroundPath - Path ke gambar background
+ * @param {object} userInfo - Informasi user yang keluar
+ * @param {string} userInfo.name - Nama user
+ * @param {string} userInfo.jid - JID user
+ * @param {string} userInfo.ppUrl - URL foto profil user (opsional)
+ * @param {object} groupInfo - Informasi grup
+ * @param {string} groupInfo.name - Nama grup
+ * @param {number} groupInfo.memberCount - Jumlah anggota grup
+ * @returns {Promise<string>} - Path ke gambar hasil
+ */
+async function createGoodbyeImage(backgroundPath, userInfo, groupInfo) {
   try {
-    // Load background image dengan penanganan error
-    let backgroundImage;
-    try {
-      backgroundImage = await loadImage(backgroundPath);
-    } catch (error) {
-      console.error('Error loading background image:', error);
-      throw new Error('Gagal memuat gambar background');
+    // Tambahkan definisi now
+    const now = new Date();
+    
+    // Gunakan background.jpg sebagai background
+    if (!backgroundPath) {
+      backgroundPath = path.join(__dirname, '../assets/background/background.jpg');
     }
     
+    // Cek apakah background ada
+    try {
+      await fs.access(backgroundPath);
+    } catch (error) {
+      botLogger.warn(`Background image not found at ${backgroundPath}, creating floral template`);
+      // Gunakan fungsi yang sama dengan welcome untuk membuat background
+      return createWelcomeImage(null, userInfo, groupInfo);
+    }
+
+    // Load background image
+    const backgroundImage = await loadImage(backgroundPath);
+    
     // Buat canvas dengan ukuran yang sama dengan background
-    const canvas = createCanvas(1920, 480);
+    const canvas = createCanvas(backgroundImage.width, backgroundImage.height);
     const ctx = canvas.getContext('2d');
     
     // Gambar background
     ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
     
-    // Atur style untuk teks "GOODBYE"
-    ctx.font = '72px "Montserrat"'; // Gunakan font yang sudah didaftarkan
-    ctx.fillStyle = '#FFD700'; // Warna kuning untuk "GOODBYE"
-    const goodbyeText = 'GOODBYE';
-    const goodbyeTextWidth = ctx.measureText(goodbyeText).width;
+    // Tambahkan overlay semi-transparan untuk membedakan goodbye
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Posisikan teks "GOODBYE" di tengah
-    ctx.fillText(goodbyeText, (canvas.width - goodbyeTextWidth) / 2, 200);
+    // Teks "GOODBYE" dengan warna kuning - ukuran font dikurangi
+    ctx.font = `bold ${canvas.height / 7}px Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffc312'; // Ubah warna menjadi kuning
+    ctx.fillText('GOODBYE', canvas.width / 2, canvas.height / 3);
     
-    // Atur style untuk teks "Spring"
-    ctx.font = '120px "Montserrat"'; // Gunakan font yang sudah didaftarkan
-    ctx.fillStyle = '#1E90FF'; // Warna biru untuk "Spring"
-    const springText = 'Spring';
-    const springTextWidth = ctx.measureText(springText).width;
+    // Atur style untuk nama user - ukuran font dikurangi
+    ctx.font = `bold ${canvas.height / 4}px Arial, sans-serif`;
+    ctx.fillStyle = '#273c75'; // Warna biru untuk nama user
+    ctx.fillText(userInfo.name || 'User', canvas.width / 2, canvas.height / 1.6);
     
-    // Posisikan teks "Spring" di tengah
-    ctx.fillText(springText, (canvas.width - springTextWidth) / 2, 300);
+    // Menghilangkan ikon sosial media
+    
+    // Coba load foto profil user jika ada
+    let profileImage;
+    try {
+      if (userInfo.ppUrl) {
+        profileImage = await loadImage(userInfo.ppUrl);
+        
+        // Gambar foto profil kecil di pojok kiri atas sejajar dengan bunga
+        const profileSize = canvas.height / 8;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(profileSize, profileSize, profileSize / 2, 0, 2 * Math.PI);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(profileImage, profileSize * 0.5, profileSize / 2, profileSize, profileSize);
+        
+        // Tambahkan filter abu-abu
+        ctx.globalCompositeOperation = 'saturation';
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(profileSize * 0.5, profileSize / 2, profileSize, profileSize);
+        ctx.restore();
+      }
+    } catch (error) {
+      botLogger.error('Error loading profile image:', error);
+      // Lanjutkan tanpa foto profil
+    }
     
     // Simpan hasil menggunakan FileManager
     const buffer = canvas.toBuffer('image/png');
-    const result = await fileManager.saveFile(buffer, 'goodbye.png', 'temp');
+    const fileName = `goodbye_${Date.now()}.png`;
+    const result = await fileManager.saveFile(buffer, fileName, 'temp');
     
     if (!result.success) {
       throw new Error(result.error);
@@ -109,13 +383,180 @@ async function createGoodbyeText(backgroundPath) {
     
     return result.path;
   } catch (error) {
-    console.error('Error creating goodbye text:', error);
+    botLogger.error('Error creating goodbye image:', error);
     throw error;
   }
 }
 
+/**
+ * Menangani event ketika user bergabung ke grup
+ * @param {object} sock - Socket WhatsApp
+ * @param {object} msg - Pesan group update
+ * @returns {Promise<void>}
+ */
+async function handleGroupJoin(sock, msg) {
+  try {
+    // Extrak informasi grup
+    const groupJid = msg.key.remoteJid;
+    const groupMetadata = await sock.groupMetadata(groupJid);
+    const groupName = groupMetadata.subject;
+    const memberCount = groupMetadata.participants.length;
+    
+    // Dapatkan informasi siapa yang bergabung
+    if (!msg.messageStubParameters) {
+      return; // Bukan notifikasi member baru
+    }
+    
+    // Dapatkan participant yang baru bergabung
+    const addedParticipants = msg.messageStubParameters || [];
+    
+    for (const participantJid of addedParticipants) {
+      try {
+        // Coba dapatkan foto profil
+        let ppUrl = null;
+        try {
+          ppUrl = await sock.profilePictureUrl(participantJid, 'image');
+        } catch {
+          // Lanjutkan tanpa foto profil
+        } 
+        
+        // Dapatkan nama participant
+        let participantName = participantJid.split('@')[0];
+        try {
+          const contact = await sock.getContact(participantJid);
+          if (contact && contact.notify) {
+            participantName = contact.notify;
+          }
+        } catch {
+          // Lanjutkan dengan nomor sebagai nama
+        }
+        
+        // Buat gambar welcome
+        const welcomeImagePath = await createWelcomeImage(
+          null, // Gunakan background default
+          {
+            name: participantName,
+            jid: participantJid,
+            ppUrl: ppUrl
+          },
+          {
+            name: groupName,
+            memberCount: memberCount
+          }
+        );
+        
+        // Kirim gambar welcome
+        await sock.sendMessage(
+          groupJid,
+          {
+            image: { url: welcomeImagePath },
+            caption: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
+            mentions: [participantJid]
+          }
+        );
+        
+        // Hapus file temporary
+        try {
+          await fs.unlink(welcomeImagePath);
+        } catch (unlinkError) {
+          botLogger.error('Error deleting temporary welcome image:', unlinkError);
+        }
+      } catch (participantError) {
+        botLogger.error(`Error handling join for participant ${participantJid}:`, participantError);
+      }
+    }
+  } catch (error) {
+    botLogger.error('Error handling group join:', error);
+  }
+}
+
+/**
+ * Menangani event ketika user meninggalkan grup
+ * @param {object} sock - Socket WhatsApp
+ * @param {object} msg - Pesan group update
+ * @returns {Promise<void>}
+ */
+async function handleGroupLeave(sock, msg) {
+  try {
+    // Extrak informasi grup
+    const groupJid = msg.key.remoteJid;
+    const groupMetadata = await sock.groupMetadata(groupJid);
+    const groupName = groupMetadata.subject;
+    const memberCount = groupMetadata.participants.length;
+    
+    // Dapatkan informasi siapa yang keluar
+    if (!msg.messageStubParameters) {
+      return; // Bukan notifikasi member keluar
+    }
+    
+    // Dapatkan participant yang keluar
+    const removedParticipants = msg.messageStubParameters || [];
+    
+    for (const participantJid of removedParticipants) {
+      try {
+        // Coba dapatkan foto profil
+        let ppUrl = null;
+        try {
+          ppUrl = await sock.profilePictureUrl(participantJid, 'image');
+        } catch {
+          // Lanjutkan tanpa foto profil
+        }
+        
+        // Dapatkan nama participant
+        let participantName = participantJid.split('@')[0];
+        try {
+          const contact = await sock.getContact(participantJid);
+          if (contact && contact.notify) {
+            participantName = contact.notify;
+          }
+        } catch {
+          // Lanjutkan dengan nomor sebagai nama
+        }
+        
+        // Buat gambar goodbye
+        const goodbyeImagePath = await createGoodbyeImage(
+          null, // Gunakan background default
+          {
+            name: participantName,
+            jid: participantJid,
+            ppUrl: ppUrl
+          },
+          {
+            name: groupName,
+            memberCount: memberCount
+          }
+        );
+        
+        // Kirim gambar goodbye
+        await sock.sendMessage(
+          groupJid,
+          {
+            image: { url: goodbyeImagePath },
+            caption: `Selamat tinggal @${participantJid.split('@')[0]}! 👋`,
+            mentions: [participantJid]
+          }
+        );
+        
+        // Hapus file temporary
+        try {
+          await fs.unlink(goodbyeImagePath);
+        } catch (unlinkError) {
+          botLogger.error('Error deleting temporary goodbye image:', unlinkError);
+        }
+      } catch (participantError) {
+        botLogger.error(`Error handling leave for participant ${participantJid}:`, participantError);
+      }
+    }
+  } catch (error) {
+    botLogger.error('Error handling group leave:', error);
+  }
+}
+
+// Export fungsi untuk digunakan di file lain
 module.exports = {
-  createWelcomeText,
-  createGoodbyeText
+  createWelcomeImage,
+  createGoodbyeImage,
+  handleGroupJoin,
+  handleGroupLeave
 };
 

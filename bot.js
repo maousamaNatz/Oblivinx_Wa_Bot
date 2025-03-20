@@ -702,15 +702,61 @@ const initBot = async () => {
             );
             return;
           }
+          
           try {
+            // Update cache metadata grup
             const metadata = await promiseWithTimeout(
               sock.groupMetadata(event.id),
               5000
             );
             groupCache.set(event.id, metadata);
+            
+            // Cek tipe update (add/remove)
+            const { participants, action } = event;
+            
+            // Import fungsi welcome/goodbye
+            const { handleGroupJoin, handleGroupLeave } = require('./src/lib/welcomeNgoodbyemsg');
+            
+            // Buat pesan yang sesuai format untuk diproses
+            const mockMsg = {
+              key: {
+                remoteJid: event.id
+              },
+              messageContent: {}
+            };
+            
+            // Tambahkan data yang sesuai berdasarkan tipe event
+            if (action === 'add') {
+              mockMsg.messageContent.groupParticipantAddNotif = {
+                participants: participants
+              };
+              mockMsg.messageStubType = 28; // GROUP_PARTICIPANT_ADD
+              mockMsg.messageStubParameters = participants;
+              
+              // Panggil fungsi untuk handle welcome
+              try {
+                await handleGroupJoin(sock, mockMsg);
+              } catch (err) {
+                botLogger.error('Error handling group join via event:', err);
+              }
+            } 
+            else if (action === 'remove') {
+              mockMsg.messageContent.groupParticipantRemoveNotif = {
+                participants: participants
+              };
+              mockMsg.messageStubType = 27; // GROUP_PARTICIPANT_LEAVE
+              mockMsg.messageStubParameters = participants;
+              
+              // Panggil fungsi untuk handle goodbye
+              try {
+                await handleGroupLeave(sock, mockMsg);
+              } catch (err) {
+                botLogger.error('Error handling group leave via event:', err);
+              }
+            }
           } catch (error) {
             botLogger.error(
-              `Error updating participants in ${event.id}:`,
+              `Error in group-participants.update (${event.id}):`,
               error
             );
           }

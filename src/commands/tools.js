@@ -409,73 +409,78 @@ Oblixn.cmd({
   },
 });
 
-
+const takeScreenshot = async (url, outputPath) => {
+    try {
+        const response = await axios({
+            method: 'get',
+            url: "https://api.apiflash.com/v1/urltoimage",
+            responseType: "arraybuffer",
+            params: {
+                access_key: "2fc9726e595d40eebdf6792f0dd07380",
+                url: url
+            }
+        });
+        
+        await fs.writeFile(outputPath, response.data);
+    } catch (error) {
+        throw new Error(`Gagal mengambil screenshot: ${error.message}`);
+    }
+};
 
 Oblixn.cmd({
-  name: "screenshot",
-  alias: ["screenshot", "ss"],
-  desc: "📸 Mengambil screenshot dari URL",
-  category: "converter",
-  async exec(client, msg, args) {
-    const logDetails = {
-      timestamp: new Date().toISOString(),
-      user: msg.from,
-      command: "screenshot",
-      args: args,
-    };
+    name: "screenshot",
+    alias: ["screenshot", "ss"],
+    desc: "📸 Mengambil screenshot dari URL",
+    category: "converter",
+    async exec(client, msg, args) {
+        const logDetails = {
+            timestamp: new Date().toISOString(),
+            user: msg.from,
+            command: "screenshot",
+            args: args,
+        };
 
-    try {
-      // Check if client is defined
-      if (!client) {
-        logDetails.error = "Client is not initialized.";
-        console.error(logDetails);
-        throw new Error(logDetails.error);
-      }
+        try {
+            if (!client) {
+                throw new Error("Client is not initialized.");
+            }
 
-      const url = args[0];
-      if (!url) {
-        const errorMessage = "❌ Silakan berikan URL website yang ingin Anda ambil screenshotnya!";
-        logDetails.error = errorMessage;
-        console.warn(logDetails);
-        return await client.sendMessage(msg.from, { text: errorMessage }, { quoted: msg });
-      }
+            const url = args[0];
+            if (!url) {
+                const errorMessage = "❌ Silakan berikan URL website yang ingin Anda ambil screenshotnya!";
+                await client.sendMessage(msg.from, { text: errorMessage }, { quoted: msg });
+                return;
+            }
 
-      const outputPath = `screenshot_${msg.key.id}.png`;
-      await takeScreenshot(url, outputPath);
+            // Validasi URL sederhana
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                throw new Error("URL harus dimulai dengan http:// atau https://");
+            }
 
-      // Kirim screenshot
-      const imageBuffer = await fs.promises.readFile(outputPath);
-      await client.sendMessage(msg.from, { image: imageBuffer, caption: `Screenshot dari ${url}` }, { quoted: msg });
+            const outputPath = `./media/img/screenshot_${msg.key.id}.jpeg`;
+            await takeScreenshot(url, outputPath);
 
-      // Hapus file setelah dikirim
-      await FileManager.deleteFile(outputPath);
+            // Kirim screenshot
+            const imageBuffer = await fs.readFile(outputPath);
+            await client.sendMessage(msg.from, { 
+                image: imageBuffer, 
+                caption: `✅ Screenshot dari ${url}` 
+            }, { quoted: msg });
 
-      // Attempt to send a message
-      const successMessage = "Screenshot taken!";
-      await client.sendMessage(msg.from, { text: successMessage });
-      logDetails.success = successMessage;
-      console.log(logDetails);
-    } catch (error) {
-      logDetails.error = `Error executing command screenshot: ${error.message}`;
-      console.error(logDetails);
-      if (client && typeof client.reply === "function") {
-        await client.reply(msg, "Gagal mengambil screenshot. Pastikan client terhubung dengan benar.");
-      }
+            // Hapus file setelah dikirim
+            await fs.unlink(outputPath);
+
+            logDetails.success = "Screenshot successfully taken and sent!";
+            console.log(logDetails);
+
+        } catch (error) {
+            logDetails.error = error.message;
+            console.error(logDetails);
+            
+            const errorMessage = `❌ Gagal mengambil screenshot: ${error.message}`;
+            if (client && client.sendMessage) {
+                await client.sendMessage(msg.from, { text: errorMessage }, { quoted: msg });
+            }
+        }
     }
-  },
 });
-
-async function takeScreenshot(url, outputPath) {
-  try {
-    const { data } = await axios.get("https://api.apiflash.com/v1/urltoimage", {
-      responseType: "arraybuffer",
-      params: {
-        access_key: "2fc9726e595d40eebdf6792f0dd07380",
-        url: url,
-      },
-    });
-    await fs.promises.writeFile(outputPath, data);
-  } catch (error) {
-    throw new Error("Gagal mengambil screenshot. Pastikan URL valid dan server responsif.");
-  }
-}
