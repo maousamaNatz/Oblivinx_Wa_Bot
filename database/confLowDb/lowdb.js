@@ -46,16 +46,37 @@
   // Fungsi internal untuk membaca data dari file JSON
   async function readDatabase() {
     try {
-      const data = await fs.readFile(dbFile, "utf8");
-      return JSON.parse(data);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        console.log(`Database file not found at ${dbFile}, initializing...`);
-        await initializeDatabase();
-        return await readDatabase(); // Coba baca setelah inisialisasi
+      // Baca file database
+      const data = await fs.readFile(dbFile, 'utf8');
+      
+      // Tambahkan validasi dan pembersihan data
+      let cleanedData = data;
+      try {
+        // Coba parse untuk verifikasi
+        JSON.parse(cleanedData);
+      } catch (error) {
+        console.log('Database JSON rusak, mencoba perbaikan otomatis...');
+        
+        // Opsi 1: Gunakan backup jika tersedia
+        if (await fs.stat(`${dbFile}.backup`).then(() => true)) {
+          console.log('Menggunakan file backup...');
+          cleanedData = await fs.readFile(`${dbFile}.backup`, 'utf8');
+        } else {
+          // Opsi 2: Coba bersihkan karakter tidak valid
+          console.log('Membersihkan karakter tidak valid...');
+          // Menghapus karakter kontrol dan non-whitespace yang potensial menyebabkan error
+          cleanedData = data.replace(/[^\x20-\x7E\s]/g, '');
+        }
       }
-      console.error("Error reading database:", error.message, error.stack);
-      throw error;
+      
+      // Buat backup sebelum parsing final
+      await fs.writeFile(`${dbFile}.backup`, cleanedData, 'utf8');
+      
+      return JSON.parse(cleanedData);
+    } catch (error) {
+      console.error('Error reading database:', error.message, error);
+      // Kembalikan objek kosong jika masih gagal
+      return {};
     }
   }
   // Fungsi internal untuk menulis data ke file JSON
@@ -261,31 +282,40 @@
   }
 
   // Fungsi untuk memperbarui data group
-  async function updateGroup(groupId, updatedData) {
+  async function updateGroup(groupId, groupData) {
     try {
-      if (typeof groupId !== "string" || groupId.length === 0) {
-        throw new Error("Invalid groupId: must be a non-empty string");
+      const db = await readDatabase();
+      
+      // Inisialisasi struktur jika belum ada
+      if (!db.groups) {
+        db.groups = {};
       }
-      const data = await readDatabase();
-      const groupIndex = data.groups.findIndex(
-        (group) => group.group_id === groupId
-      );
-      if (groupIndex === -1) {
-        throw new Error(`Group not found: ${groupId}`);
-      }
-      const updatedGroup = { ...data.groups[groupIndex], ...updatedData };
-      if (!validateGroup(updatedGroup)) {
-        throw new Error(
-          "Invalid updated group data: " + ajv.errorsText(validateGroup.errors)
-        );
-      }
-      data.groups[groupIndex] = updatedGroup;
-      console.log(`Updating group ${groupId} with data: ${JSON.stringify(updatedGroup)}`);
-      await writeDatabase(data);
-      return { success: true, data: updatedGroup };
+      
+      // Ambil data grup lama atau buat baru
+      const existingGroup = db.groups[groupId] || {
+        id: groupId,
+        name: '',
+        members: [],
+        topUsers: [],
+        settings: {
+          levelingEnabled: true
+        },
+        lastUpdate: new Date().toISOString()
+      };
+      
+      // Update data dengan yang baru
+      db.groups[groupId] = {
+        ...existingGroup,
+        ...groupData,
+        lastUpdate: new Date().toISOString()
+      };
+      
+      // Simpan ke database
+      await writeDatabase(db);
+      return true;
     } catch (error) {
-      console.error("Error updating group:", error.message, error.stack);
-      throw error;
+      console.error('Error updating group:', error);
+      return false;
     }
   }
 
@@ -748,6 +778,186 @@ async function addGroup(groupData) {
     }
   }
 
+  // Fungsi untuk mendapatkan data level pengguna
+  async function getUserLevel(userId, groupId) {
+    try {
+      const db = await readDatabase();
+      
+      if (!db.leveling) {
+        db.leveling = {};
+      }
+      
+      const key = `${groupId}_${userId}`;
+      
+      if (!db.leveling[key]) {
+        // Buat data level pengguna baru jika belum ada
+        const LevelingModel = require('./models/leveling');
+        db.leveling[key] = LevelingModel.createUserLevel(userId, groupId);
+        await writeDatabase(db);
+      }
+      
+      return db.leveling[key];
+    } catch (error) {
+      console.error('Error getting user level:', error);
+      return null;
+    }
+  }
+
+  // Fungsi untuk mengupdate XP dan level pengguna
+  async function updateUserLevel(userId, groupId, xpToAdd) {
+    try {
+      const db = await readDatabase();
+      const LevelingModel = require('./models/leveling');
+      
+      if (!db.leveling) {
+        db.leveling = {};
+      }
+      
+      // Cek apakah grup sudah ada di database
+      if (!db.groups) {
+        db.groups = {};
+      }
+      
+      if (!db.groups[groupId]) {
+        db.groups[groupId] = {
+          id: groupId,
+          name: '',
+          members: [],
+          topUsers: [],
+          settings: {
+            levelingEnabled: true
+          },
+          lastUpdate: new Date().toISOString()
+        };
+      }
+      
+      const key = `${groupId}_${userId}`;
+      
+      // Ambil atau buat data level pengguna
+      let userData = db.leveling[key];
+      if (!userData) {
+        userData = LevelingModel.createUserLevel(userId, groupId);
+      }
+      
+      // Update XP dan hitung level baru
+      userData.xp += xpToAdd;
+      userData.messages += 1;
+      userData.lastMessageTime = new Date().toISOString();
+      
+      // Update hari aktif untuk streak
+      const today = new Date().toISOString().split('T')[0];
+      if (!userData.activeDays) userData.activeDays = {};
+      userData.activeDays[today] = (userData.activeDays[today] || 0) + 1;
+      
+      // Hitung streak harian
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayKey = yesterday.toISOString().split('T')[0];
+      
+      if (userData.activeDays[yesterdayKey]) {
+        userData.streak += 1;
+      } else {
+        userData.streak = 1;
+      }
+      
+      // Cek apakah naik level
+      const oldLevel = userData.level;
+      const xpForNextLevel = LevelingModel.xpNeededForLevel(userData.level);
+      
+      let leveledUp = false;
+      
+      while (userData.xp >= xpForNextLevel) {
+        userData.level += 1;
+        leveledUp = true;
+        userData.xp -= xpForNextLevel;
+      }
+      
+      // Update data grup jika user naik level
+      if (leveledUp && db.groups[groupId]) {
+        // Tambahkan data user ke daftar top user grup
+        if (!db.groups[groupId].topUsers) db.groups[groupId].topUsers = [];
+        
+        // Cek apakah user sudah ada di daftar
+        const userIndex = db.groups[groupId].topUsers.findIndex(u => u.userId === userId);
+        
+        if (userIndex >= 0) {
+          // Update data user
+          db.groups[groupId].topUsers[userIndex] = {
+            userId,
+            level: userData.level,
+            xp: userData.xp,
+            username: userData.username || '',
+            messages: userData.messages,
+            lastUpdated: new Date().toISOString()
+          };
+        } else {
+          // Tambahkan user baru
+          db.groups[groupId].topUsers.push({
+            userId,
+            level: userData.level,
+            xp: userData.xp,
+            username: userData.username || '',
+            messages: userData.messages,
+            lastUpdated: new Date().toISOString()
+          });
+        }
+        
+        // Urutkan berdasarkan level dan XP
+        db.groups[groupId].topUsers.sort((a, b) => {
+          if (a.level !== b.level) return b.level - a.level;
+          return b.xp - a.xp;
+        });
+        
+        // Batasi jumlah top users
+        db.groups[groupId].topUsers = db.groups[groupId].topUsers.slice(0, 10);
+        
+        // Update waktu terakhir
+        db.groups[groupId].lastUpdate = new Date().toISOString();
+      }
+      
+      // Update data dan simpan
+      userData.lastUpdated = new Date().toISOString();
+      db.leveling[key] = userData;
+      await writeDatabase(db);
+      
+      return {
+        userData,
+        leveledUp,
+        oldLevel,
+        newLevel: userData.level
+      };
+    } catch (error) {
+      console.error('Error updating user level:', error);
+      return null;
+    }
+  }
+
+  // Fungsi untuk mendapatkan daftar top users di grup
+  async function getGroupLeaderboard(groupId, limit = 10) {
+    try {
+      const db = await readDatabase();
+      
+      if (!db.leveling) {
+        return [];
+      }
+      
+      // Filter pengguna di grup tertentu
+      const groupUsers = Object.values(db.leveling)
+        .filter(user => user.groupId === groupId)
+        .sort((a, b) => {
+          // Sort berdasarkan level dan XP
+          if (a.level !== b.level) return b.level - a.level;
+          return b.xp - a.xp;
+        })
+        .slice(0, limit);
+      
+      return groupUsers;
+    } catch (error) {
+      console.error('Error getting group leaderboard:', error);
+      return [];
+    }
+  }
+
   initializeDatabase().catch((err) => {
     console.error("Failed to initialize database on module load:", err);
     process.exit(1);
@@ -774,4 +984,7 @@ async function addGroup(groupData) {
     updateGroup,
     ...achievementsDB,
     ...levelConfigDB,
+    getUserLevel,
+    updateUserLevel,
+    getGroupLeaderboard,
   };

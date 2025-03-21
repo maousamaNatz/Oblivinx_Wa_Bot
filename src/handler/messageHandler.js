@@ -2,6 +2,8 @@ const { botLogger } = require('../utils/logger');
 const { PREFIX, commands } = require('../../config/config');
 const { handleGroupMessage } = require('../handler/groupHandler');
 const { handleGroupJoin, handleGroupLeave } = require('../lib/welcomeNgoodbyemsg');
+const { trackActivityXP } = require("../leveling");
+const { sendUserLevelUpNotification, sendGroupLevelUpNotification } = require("../lib/levelUpgrade");
 
 /**
  * Menangani pesan yang masuk baik dari pribadi maupun grup.
@@ -67,6 +69,17 @@ async function handleMessage(client, message) {
       // Jika bukan perintah yang dikenali, tangani sebagai pesan grup biasa
       botLogger.info(`Memanggil handleGroupMessage untuk chat: ${chat}`);
       await handleGroupMessage(client, message);
+      
+      // Tambahkan tracking XP untuk pesan di grup
+      const groupId = message.from;
+      
+      // Track aktivitas pesan dan berikan XP
+      const result = await trackActivityXP(sender, groupId, 'message', 1, client);
+      
+      // Tampilkan notifikasi level up
+      if (result.user && result.user.leveledUp) {
+        // Notifikasi sudah ditangani dalam trackActivityXP
+      }
       return;
     }
     

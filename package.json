@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "test": "mocha test.js",
-    "start": "node bot.js",
+    "start": "pm2 start bot.js --name whatsapp-bot",
     "dev": "nodemon --config nodemon.json bot.js",
     "prod": "pm2 start bot.js --name whatsapp-bot",
     "stop": "pm2 stop whatsapp-bot",

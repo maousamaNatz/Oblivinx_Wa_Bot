@@ -1141,4 +1141,4 @@ function initializeMessageQueue() {
   // Log status antrian dimulai
   botLogger.info(`Message queue system initialized with capacity for ${messageQueue.maxQueueSize.toLocaleString()} messages`);
   botLogger.info(`Processing up to ${messageQueue.maxConcurrentProcessing} messages concurrently`);
-} 
+}
