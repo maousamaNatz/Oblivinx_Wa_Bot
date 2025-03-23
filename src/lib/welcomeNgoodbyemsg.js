@@ -20,7 +20,6 @@ try {
   });
 } catch (error) {
   console.error('Error registering font:', error);
-  // Gunakan font default jika gagal mendaftarkan font kustom
 }
 
 /**
@@ -398,6 +397,24 @@ async function handleGroupJoin(sock, msg) {
   try {
     // Extrak informasi grup
     const groupJid = msg.key.remoteJid;
+    
+    // Periksa status welcome_message di database
+    const db = require('../../database/confLowDb/lowdb');
+    const group = await db.getGroup(groupJid);
+    
+    // Jika grup tidak ada di database atau welcome_message tidak aktif, keluar
+    if (!group) {
+      botLogger.info(`Grup ${groupJid} tidak ditemukan di database, tidak mengirim welcome message`);
+      return;
+    }
+    
+    if (group.welcome_message !== 1) {
+      botLogger.info(`Welcome message tidak aktif untuk grup ${groupJid}`);
+      return;
+    }
+    
+    botLogger.info(`Mengirim welcome message untuk grup ${groupJid}`);
+    
     const groupMetadata = await sock.groupMetadata(groupJid);
     const groupName = groupMetadata.subject;
     const memberCount = groupMetadata.participants.length;
@@ -480,6 +497,24 @@ async function handleGroupLeave(sock, msg) {
   try {
     // Extrak informasi grup
     const groupJid = msg.key.remoteJid;
+    
+    // Periksa status goodbye_message di database
+    const db = require('../../database/confLowDb/lowdb');
+    const group = await db.getGroup(groupJid);
+    
+    // Jika grup tidak ada di database atau goodbye_message tidak aktif, keluar
+    if (!group) {
+      botLogger.info(`Grup ${groupJid} tidak ditemukan di database, tidak mengirim goodbye message`);
+      return;
+    }
+    
+    if (group.goodbye_message !== 1) {
+      botLogger.info(`Goodbye message tidak aktif untuk grup ${groupJid}`);
+      return;
+    }
+    
+    botLogger.info(`Mengirim goodbye message untuk grup ${groupJid}`);
+    
     const groupMetadata = await sock.groupMetadata(groupJid);
     const groupName = groupMetadata.subject;
     const memberCount = groupMetadata.participants.length;

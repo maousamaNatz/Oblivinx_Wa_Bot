@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "test": "mocha test.js",
-    "start": "pm2 start bot.js --name whatsapp-bot",
+    "start": "node bot.js",
     "dev": "nodemon --config nodemon.json bot.js",
     "prod": "pm2 start bot.js --name whatsapp-bot",
     "stop": "pm2 stop whatsapp-bot",
@@ -13,11 +13,7 @@
     "monitor": "pm2 monit whatsapp-bot",
     "logs": "pm2 logs whatsapp-bot",
     "delete": "pm2 delete whatsapp-bot",
-    "update": "pm2 update whatsapp-bot",
-    "migrate": "node database/migrate.js",
-    "migrate:fresh": "rm -rf auth_info_baileys && npm run migrate",
-    "test:load": "k6 run tests/load_test.js",
-    "test:stress": "k6 run tests/load_test.js --vus 100 --duration 30s"
+    "update": "pm2 update whatsapp-bot"
   },
   "keywords": [
     "whatsapp",
@@ -70,7 +66,7 @@
       "description": "Chatbot whatsapp yang dimaksudkan untuk membantu dalam mengelola whatsapp bot dan untuk bersenang senang dengan ai"
     },
     "feature2": {
-      "name": "web whatsapp bot",
+      "name": "web whatsapp bot", 
       "description": "Chatbot whatsapp yang dimaksudkan untuk membantu dalam mengelola whatsapp bot dan untuk bersenang senang dengan ai"
     }
   },
@@ -85,7 +81,7 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "axios": "^1.8.2",
-    "canvas": "^3.1.0",
+    "canvas": "^2.11.2",
     "cheerio": "^1.0.0",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.7",

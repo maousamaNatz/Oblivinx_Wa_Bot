@@ -131,18 +131,20 @@ async function handleGroupMessage(sock, msg) {
     if (msg.messageStubType) {
       const group = await db.getGroup(chat);
       
-      // Keluar jika fitur welcome/goodbye tidak diaktifkan
-      if (!group || group.welcome_message !== 1) return;
+      // Keluar jika grup tidak ada di database
+      if (!group) return;
       
       switch (msg.messageStubType) {
-        case 27: // GROUP_PARTICIPANT_LEAVE
+        case 27:
         case 28: // GROUP_PARTICIPANT_ADD
           try {
             if (msg.messageStubType === 28) {
-              // Handle join/welcome
+              // Handle join/welcome - cek welcome_message
+              if (group.welcome_message !== 1) return;
               await handleGroupJoin(sock, msg);
             } else if (msg.messageStubType === 27) {
-              // Handle leave/goodbye
+              // Handle leave/goodbye - cek goodbye_message
+              if (group.goodbye_message !== 1) return;
               await handleGroupLeave(sock, msg);
             }
           } catch (error) {

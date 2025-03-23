@@ -739,11 +739,11 @@ global.Oblixn.cmd({
   },
 });
 
-// Command: welcome
+// Command: welcome (mengontrol khusus pesan welcome saja)
 global.Oblixn.cmd({
   name: "welcome",
-  alias: ["setwelcome", "welcomemsg"],
-  desc: "Mengaktifkan atau menonaktifkan pesan sambutan dan perpisahan",
+  alias: ["sambutan"],
+  desc: "Mengaktifkan atau menonaktifkan pesan sambutan saat anggota masuk grup",
   category: "group",
   async exec(msg, { args }) {
     if (!msg.isGroup) {
@@ -755,7 +755,7 @@ global.Oblixn.cmd({
     }
     
     try {
-      // Dapatkan pengaturan grup saat ini
+      // Cari data grup dari database
       let group = await db.getGroup(msg.chat);
       
       if (!group) {
@@ -766,6 +766,7 @@ global.Oblixn.cmd({
           group_name: groupMetadata.subject,
           is_active: true,
           welcome_message: 1, // Aktifkan welcome message secara default
+          goodbye_message: 0, // Goodbye tetap nonaktif
           created_at: new Date().toISOString(),
         };
         const result = await db.addGroup(groupData);
@@ -778,7 +779,7 @@ global.Oblixn.cmd({
       
       if (arg === "status") {
         const status = group.welcome_message === 1 ? "aktif" : "nonaktif";
-        return await msg.reply(`🔔 Status pesan welcome/goodbye: ${status}`);
+        return await msg.reply(`🔔 Status pesan sambutan: ${status}`);
       }
       
       // Update pengaturan
@@ -797,11 +798,151 @@ global.Oblixn.cmd({
       });
       
       // Kirim konfirmasi
-      await msg.reply(`✅ Pesan welcome/goodbye telah di${newStatus === 1 ? 'aktifkan' : 'nonaktifkan'} untuk grup ini.`);
+      await msg.reply(`✅ Pesan sambutan telah di${newStatus === 1 ? 'aktifkan' : 'nonaktifkan'} untuk grup ini.`);
       
-      botLogger.info(`Welcome/goodbye message ${newStatus === 1 ? 'enabled' : 'disabled'} for group ${msg.chat}`);
+      botLogger.info(`Welcome message ${newStatus === 1 ? 'enabled' : 'disabled'} for group ${msg.chat}`);
     } catch (error) {
       botLogger.error(`Error in welcome command: ${error.message}`, error);
+      await msg.reply(`❌ Terjadi kesalahan: ${error.message}`);
+    }
+  }
+});
+
+// Command: goodbye (mengontrol khusus pesan goodbye saja)
+global.Oblixn.cmd({
+  name: "goodbye",
+  alias: ["perpisahan", "leave"],
+  desc: "Mengaktifkan atau menonaktifkan pesan perpisahan saat anggota keluar grup",
+  category: "group",
+  async exec(msg, { args }) {
+    if (!msg.isGroup) {
+      return await msg.reply("Perintah ini hanya bisa digunakan di grup!");
+    }
+    
+    if (!msg.isAdmin && !global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("Hanya admin grup dan owner bot yang bisa menggunakan perintah ini!");
+    }
+    
+    try {
+      // Cari data grup dari database
+      let group = await db.getGroup(msg.chat);
+      
+      if (!group) {
+        // Jika grup belum ada di database, tambahkan
+        const groupMetadata = await msg.sock.groupMetadata(msg.chat);
+        const groupData = {
+          group_id: msg.chat,
+          group_name: groupMetadata.subject,
+          is_active: true,
+          welcome_message: 0, // Welcome tetap nonaktif
+          goodbye_message: 1, // Aktifkan goodbye message
+          created_at: new Date().toISOString(),
+        };
+        const result = await db.addGroup(groupData);
+        group = result.data;
+        botLogger.info(`Grup ${groupMetadata.subject} (${msg.chat}) ditambahkan ke database`);
+      }
+      
+      // Cek argumen on/off atau status
+      const arg = args.length > 0 ? args[0].toLowerCase() : "status";
+      
+      if (arg === "status") {
+        const status = group.goodbye_message === 1 ? "aktif" : "nonaktif";
+        return await msg.reply(`🔔 Status pesan perpisahan: ${status}`);
+      }
+      
+      // Update pengaturan
+      let newStatus = 0;
+      if (arg === "on" || arg === "aktif" || arg === "1") {
+        newStatus = 1;
+      } else if (arg === "off" || arg === "mati" || arg === "0") {
+        newStatus = 0;
+      } else {
+        return await msg.reply(`❌ Argumen tidak valid. Gunakan "on" atau "off".`);
+      }
+      
+      // Update database
+      await db.updateGroup(msg.chat, {
+        goodbye_message: newStatus
+      });
+      
+      // Kirim konfirmasi
+      await msg.reply(`✅ Pesan perpisahan telah di${newStatus === 1 ? 'aktifkan' : 'nonaktifkan'} untuk grup ini.`);
+      
+      botLogger.info(`Goodbye message ${newStatus === 1 ? 'enabled' : 'disabled'} for group ${msg.chat}`);
+    } catch (error) {
+      botLogger.error(`Error in goodbye command: ${error.message}`, error);
+      await msg.reply(`❌ Terjadi kesalahan: ${error.message}`);
+    }
+  }
+});
+
+// Command: welcomeconfig (menggantikan command welcome yang lama, mengatur kedua setting sekaligus)
+global.Oblixn.cmd({
+  name: "welcomeconfig",
+  alias: ["wconfig", "wc", "pesanbot"],
+  desc: "Mengaktifkan atau menonaktifkan pesan sambutan dan perpisahan secara bersamaan",
+  category: "group",
+  async exec(msg, { args }) {
+    if (!msg.isGroup) {
+      return await msg.reply("Perintah ini hanya bisa digunakan di grup!");
+    }
+    
+    if (!msg.isAdmin && !global.Oblixn.isOwner(msg.sender)) {
+      return await msg.reply("Hanya admin grup dan owner bot yang bisa menggunakan perintah ini!");
+    }
+    
+    try {
+      // Cari data grup dari database
+      let group = await db.getGroup(msg.chat);
+      
+      if (!group) {
+        // Jika grup belum ada di database, tambahkan
+        const groupMetadata = await msg.sock.groupMetadata(msg.chat);
+        const groupData = {
+          group_id: msg.chat,
+          group_name: groupMetadata.subject,
+          is_active: true,
+          welcome_message: 1, // Aktifkan welcome message secara default
+          goodbye_message: 1, // Aktifkan goodbye message secara default
+          created_at: new Date().toISOString(),
+        };
+        const result = await db.addGroup(groupData);
+        group = result.data;
+        botLogger.info(`Grup ${groupMetadata.subject} (${msg.chat}) ditambahkan ke database`);
+      }
+      
+      // Cek argumen on/off atau status
+      const arg = args.length > 0 ? args[0].toLowerCase() : "status";
+      
+      if (arg === "status") {
+        const welcomeStatus = group.welcome_message === 1 ? "aktif" : "nonaktif";
+        const goodbyeStatus = group.goodbye_message === 1 ? "aktif" : "nonaktif";
+        return await msg.reply(`📊 *Status Pesan Bot*\n\n🔔 Pesan sambutan: ${welcomeStatus}\n👋 Pesan perpisahan: ${goodbyeStatus}`);
+      }
+      
+      // Update pengaturan
+      let newStatus = 0;
+      if (arg === "on" || arg === "aktif" || arg === "1") {
+        newStatus = 1;
+      } else if (arg === "off" || arg === "mati" || arg === "0") {
+        newStatus = 0;
+      } else {
+        return await msg.reply(`❌ Argumen tidak valid. Gunakan "on" atau "off".`);
+      }
+      
+      // Update database
+      await db.updateGroup(msg.chat, {
+        welcome_message: newStatus,
+        goodbye_message: newStatus
+      });
+      
+      // Kirim konfirmasi
+      await msg.reply(`✅ Pesan sambutan dan perpisahan telah di${newStatus === 1 ? 'aktifkan' : 'nonaktifkan'} untuk grup ini.`);
+      
+      botLogger.info(`Welcome and goodbye messages ${newStatus === 1 ? 'enabled' : 'disabled'} for group ${msg.chat}`);
+    } catch (error) {
+      botLogger.error(`Error in welcomeconfig command: ${error.message}`, error);
       await msg.reply(`❌ Terjadi kesalahan: ${error.message}`);
     }
   }
@@ -812,7 +953,7 @@ global.Oblixn.cmd({
   name: "testwelcome",
   alias: ["welcometest", "testw"],
   desc: "Menguji tampilan pesan sambutan",
-  category: "group",
+  category: "group",  
   async exec(msg, { args }) {
     if (!msg.isGroup) {
       return await msg.reply("Perintah ini hanya bisa digunakan di grup!");

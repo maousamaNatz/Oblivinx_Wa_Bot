@@ -4,6 +4,7 @@
   const path = require("path");
   const achievementsDB = require("./connect/achievements");
   const levelConfigDB = require("./connect/configlv");
+  const { log } = require('../../src/utils/logger');
 
   // Tentukan path folder database
   const dbFolder = path.resolve(process.cwd(), "Oblivinx_bot_Db_1");
@@ -35,10 +36,10 @@
           orders: [],
         };
         await fs.writeFile(dbFile, JSON.stringify(initialData, null, 2), "utf8");
-        console.log(`Database initialized successfully at ${dbFile}`);
+        log(`Database initialized successfully at ${dbFile}`, 'info');
       }
     } catch (error) {
-      console.error("Error initializing database:", error.message, error.stack);
+      log("Error initializing database: " + error.message, 'error');
       throw error;
     }
   }
@@ -55,17 +56,42 @@
         // Coba parse untuk verifikasi
         JSON.parse(cleanedData);
       } catch (error) {
-        console.log('Database JSON rusak, mencoba perbaikan otomatis...');
+        log('Database JSON rusak, mencoba perbaikan otomatis...', 'warn');
         
         // Opsi 1: Gunakan backup jika tersedia
-        if (await fs.stat(`${dbFile}.backup`).then(() => true)) {
-          console.log('Menggunakan file backup...');
+        const backupExists = await fs.stat(`${dbFile}.backup`).catch(() => false);
+        if (backupExists) {
+          log('Menggunakan file backup...', 'info');
           cleanedData = await fs.readFile(`${dbFile}.backup`, 'utf8');
         } else {
           // Opsi 2: Coba bersihkan karakter tidak valid
-          console.log('Membersihkan karakter tidak valid...');
+          log('Membersihkan karakter tidak valid...', 'info');
           // Menghapus karakter kontrol dan non-whitespace yang potensial menyebabkan error
           cleanedData = data.replace(/[^\x20-\x7E\s]/g, '');
+        }
+        
+        // Coba parse lagi setelah pembersihan
+        try {
+          JSON.parse(cleanedData);
+          log('Berhasil memperbaiki data JSON', 'info');
+        } catch (parseError) {
+          log('Gagal memperbaiki data JSON, menggunakan struktur kosong...', 'error');
+          cleanedData = JSON.stringify({
+            users: [],
+            groups: [],
+            user_activity_logs: [],
+            leaderboard: [],
+            group_settings: [],
+            banned_users: [],
+            bot_instances: [],
+            bot_qr_codes: [],
+            user_leveling: [],
+            user_activities: [],
+            guilds: [],
+            user_achievements: [],
+            level_roles: [],
+            orders: [],
+          });
         }
       }
       
@@ -74,19 +100,34 @@
       
       return JSON.parse(cleanedData);
     } catch (error) {
-      console.error('Error reading database:', error.message, error);
+      log('Error reading database: ' + error.message, 'error');
       // Kembalikan objek kosong jika masih gagal
-      return {};
+      return {
+        users: [],
+        groups: [],
+        user_activity_logs: [],
+        leaderboard: [],
+        group_settings: [],
+        banned_users: [],
+        bot_instances: [],
+        bot_qr_codes: [],
+        user_leveling: [],
+        user_activities: [],
+        guilds: [],
+        user_achievements: [],
+        level_roles: [],
+        orders: [],
+      };
     }
   }
   // Fungsi internal untuk menulis data ke file JSON
   async function writeDatabase(data) {
     try {
       await fs.writeFile(dbFile, JSON.stringify(data, null, 2), "utf8");
-      console.log(`Database written successfully to ${dbFile}`);
+      log(`Database written successfully to ${dbFile}`, 'info');
       return true;
     } catch (error) {
-      console.error("Error writing to database:", error.message, error.stack);
+      log("Error writing to database: " + error.message, 'error');
       throw error;
     }
   }
@@ -180,6 +221,8 @@
       welcome_message: { type: "integer", enum: [0, 1], default: 0 },
       goodbye_message: { type: "integer", enum: [0, 1], default: 0 },
       warnings: { type: "integer", minimum: 0, default: 0 },
+      updated_at: { type: "string", format: "date-time" },
+      description: { type: ["string", "null"] },
     },
     required: ["id", "group_id", "owner_id"],
     additionalProperties: false,
@@ -227,12 +270,12 @@
         throw new Error("Invalid userId: must be a non-empty string");
       }
       const data = await readDatabase();
-      console.log(`Fetching user with ID: ${userId}`);
+      log(`Fetching user with ID: ${userId}`, 'debug');
       const user = data.users.find((user) => user.user_id === userId) || null;
-      console.log(`User found: ${JSON.stringify(user)}`);
+      log(`User found: ${JSON.stringify(user)}`, 'debug');
       return user;
     } catch (error) {
-      console.error("Error getting user:", error.message, error.stack);
+      log("Error getting user: " + error.message, 'error');
       throw error;
     }
   }
@@ -255,11 +298,11 @@
         );
       }
       data.users[userIndex] = updatedUser;
-      console.log(`Updating user ${userId} with data: ${JSON.stringify(updatedUser)}`);
+      log(`Updating user ${userId} with data: ${JSON.stringify(updatedUser)}`, 'debug');
       await writeDatabase(data);
       return { success: true, data: updatedUser };
     } catch (error) {
-      console.error("Error updating user:", error.message, error.stack);
+      log("Error updating user: " + error.message, 'error');
       throw error;
     }
   }
@@ -271,12 +314,12 @@
         throw new Error("Invalid groupId: must be a non-empty string");
       }
       const data = await readDatabase();
-      console.log(`Fetching group with ID: ${groupId}`);
+      log(`Fetching group with ID: ${groupId}`, 'debug');
       const group = data.groups.find((group) => group.group_id === groupId) || null;
-      console.log(`Group found: ${JSON.stringify(group)}`);
+      log(`Group found: ${JSON.stringify(group)}`, 'debug');
       return group;
     } catch (error) {
-      console.error("Error getting group:", error.message, error.stack);
+      log("Error getting group: " + error.message, 'error');
       throw error;
     }
   }
@@ -284,38 +327,61 @@
   // Fungsi untuk memperbarui data group
   async function updateGroup(groupId, groupData) {
     try {
-      const db = await readDatabase();
-      
-      // Inisialisasi struktur jika belum ada
-      if (!db.groups) {
-        db.groups = {};
+      if (typeof groupId !== "string" || groupId.length === 0) {
+        throw new Error("Invalid groupId: must be a non-empty string");
       }
       
-      // Ambil data grup lama atau buat baru
-      const existingGroup = db.groups[groupId] || {
-        id: groupId,
-        name: '',
-        members: [],
-        topUsers: [],
-        settings: {
-          levelingEnabled: true
-        },
-        lastUpdate: new Date().toISOString()
-      };
+      const data = await readDatabase();
+      const groupIndex = data.groups.findIndex(
+        (group) => group.group_id === groupId
+      );
       
-      // Update data dengan yang baru
-      db.groups[groupId] = {
-        ...existingGroup,
-        ...groupData,
-        lastUpdate: new Date().toISOString()
-      };
+      if (groupIndex === -1) {
+        // Grup belum ada, coba tambahkan
+        if (!groupData.owner_id) {
+          log(`Tidak dapat menambahkan grup baru ${groupId} tanpa owner_id`, 'warn');
+          return { success: false, message: "Missing owner_id for new group" };
+        }
+        
+        const result = await addGroup({
+          group_id: groupId,
+          owner_id: groupData.owner_id,
+          group_name: groupData.group_name || "Unnamed Group",
+          ...groupData
+        });
+        
+        return result;
+      }
       
-      // Simpan ke database
-      await writeDatabase(db);
-      return true;
+      // Update grup yang sudah ada
+      const updatedGroup = { ...data.groups[groupIndex], ...groupData };
+      
+      // Pastikan field yang wajib tidak diubah jadi null/undefined
+      updatedGroup.group_id = updatedGroup.group_id || groupId;
+      updatedGroup.owner_id = updatedGroup.owner_id || data.groups[groupIndex].owner_id;
+      updatedGroup.id = data.groups[groupIndex].id;
+      
+      // Tambahkan timestamp update
+      updatedGroup.updated_at = new Date().toISOString();
+      
+      // Validasi data yang diupdate
+      if (!validateGroup(updatedGroup)) {
+        log(`Invalid updated group data: ${ajv.errorsText(validateGroup.errors)}`, 'error');
+        return { 
+          success: false, 
+          message: "Invalid updated data: " + ajv.errorsText(validateGroup.errors)
+        };
+      }
+      
+      // Simpan perubahan
+      data.groups[groupIndex] = updatedGroup;
+      log(`Updating group ${groupId} with data: ${JSON.stringify(updatedGroup)}`, 'debug');
+      await writeDatabase(data);
+      
+      return { success: true, data: updatedGroup };
     } catch (error) {
-      console.error('Error updating group:', error);
-      return false;
+      log("Error updating group: " + error.message, 'error');
+      throw error;
     }
   }
 
@@ -375,16 +441,16 @@
       }
 
       if (data.users.some((user) => user.user_id === userData.user_id)) {
-        console.log(`User with user_id ${userData.user_id} already exists`);
+        log(`User with user_id ${userData.user_id} already exists`, 'warn');
         return { success: false, message: "User with this user_id already exists" };
       }
 
       data.users.push(defaultUser);
-      console.log(`Adding user: ${JSON.stringify(defaultUser)}`);
+      log(`Adding user: ${JSON.stringify(defaultUser)}`, 'debug');
       await writeDatabase(data);
       return { success: true, data: defaultUser };
     } catch (error) {
-      console.error("Error adding user:", error.message, error.stack);
+      log("Error adding user: " + error.message, 'error');
       throw error;
     }
   }
@@ -417,11 +483,11 @@
       };
       data.banned_users.push(banEntry);
 
-      console.log(`Banning user ${userId}: ${JSON.stringify(banEntry)}`);
+      log(`Banning user ${userId}: ${JSON.stringify(banEntry)}`, 'info');
       await writeDatabase(data);
       return { success: true, message: "User berhasil diban" };
     } catch (error) {
-      console.error("Error banning user:", error.message, error.stack);
+      log("Error banning user: " + error.message, 'error');
       throw error;
     }
   }
@@ -438,7 +504,7 @@
         (ban) => ban.user_id === userId && ban.is_system_block === 0
       );
       if (!bannedUser) {
-        console.log(`User ${userId} not found in banned list`);
+        log(`User ${userId} not found in banned list`, 'warn');
         return {
           success: false,
           message: "User tidak ditemukan dalam daftar banned",
@@ -455,7 +521,7 @@
         await updateUser(userId, { is_banned: 0, updated_at: user.updated_at });
       }
 
-      console.log(`Unbanning user ${userId}`);
+      log(`Unbanning user ${userId}`, 'info');
       await writeDatabase(data);
       return {
         success: true,
@@ -463,7 +529,7 @@
         wasUnbanned: true,
       };
     } catch (error) {
-      console.error("Error unbanning user:", error.message, error.stack);
+      log("Error unbanning user: " + error.message, 'error');
       throw error;
     }
   }
@@ -480,7 +546,7 @@
       const bannedInfo = data.banned_users.find((ban) => ban.user_id === userId);
 
       if (user) {
-        console.log(`User status for ${userId}: ${JSON.stringify(user)}`);
+        log(`User status for ${userId}: ${JSON.stringify(user)}`, 'debug');
         return {
           isBanned: user.is_banned === 1,
           isBlocked: user.is_blocked === 1,
@@ -491,7 +557,7 @@
         };
       }
 
-      console.log(`No user found for ${userId}, returning default status`);
+      log(`No user found for ${userId}, returning default status`, 'debug');
       return {
         isBanned: false,
         isBlocked: false,
@@ -501,7 +567,7 @@
         isSystemBlock: false,
       };
     } catch (error) {
-      console.error("Error checking user status:", error.message, error.stack);
+      log("Error checking user status: " + error.message, 'error');
       throw error;
     }
   }
@@ -534,11 +600,11 @@
       };
       data.banned_users.push(banEntry);
 
-      console.log(`Blocking user ${userId} by system: ${JSON.stringify(banEntry)}`);
+      log(`Blocking user ${userId} by system: ${JSON.stringify(banEntry)}`, 'info');
       await writeDatabase(data);
       return { success: true, message: "User berhasil diblokir oleh sistem" };
     } catch (error) {
-      console.error("Error blocking user:", error.message, error.stack);
+      log("Error blocking user: " + error.message, 'error');
       throw error;
     }
   }
@@ -550,7 +616,7 @@
       const bannedUsers = data.banned_users.filter((ban) => ban.is_system_block === 0);
 
       if (bannedUsers.length === 0) {
-        console.log("No banned users found");
+        log("No banned users found", 'info');
         return {
           success: true,
           message: "Tidak ada user yang dibanned",
@@ -579,14 +645,14 @@
       });
 
       formattedUsers.sort((a, b) => new Date(b.banDate) - new Date(a.banDate));
-      console.log(`Fetched banned users: ${JSON.stringify(formattedUsers)}`);
+      log(`Fetched banned users: ${JSON.stringify(formattedUsers)}`, 'debug');
       return {
         success: true,
         message: "Daftar user yang dibanned berhasil diambil",
         data: formattedUsers,
       };
     } catch (error) {
-      console.error("Error getting banned users list:", error.message, error.stack);
+      log("Error getting banned users list: " + error.message, 'error');
       throw error;
     }
   }
@@ -611,6 +677,7 @@ async function addGroup(groupData) {
       owner_id: groupData.owner_id,
       total_members: groupData.total_members || 0,
       created_at: groupData.created_at || new Date().toISOString(),
+      updated_at: groupData.updated_at || new Date().toISOString(),
       bot_is_admin: groupData.bot_is_admin || 0,
       registration_date: groupData.registration_date || new Date().toISOString(),
       premium_status: groupData.premium_status || 0,
@@ -634,6 +701,7 @@ async function addGroup(groupData) {
       welcome_message: groupData.welcome_message || 0,
       goodbye_message: groupData.goodbye_message || 0,
       warnings: groupData.warnings || 0,
+      description: groupData.description || null,
     };
 
     if (!validateGroup(defaultGroup)) {
@@ -641,17 +709,17 @@ async function addGroup(groupData) {
     }
 
     if (data.groups.some((group) => group.group_id === groupData.group_id)) {
-      console.log(`Group with group_id ${groupData.group_id} already exists`);
+      log(`Group with group_id ${groupData.group_id} already exists`, 'warn');
       return { success: false, message: "Group with this group_id already exists" };
     }
 
     // Pemeriksaan foreign key dihapus
     data.groups.push(defaultGroup);
-    console.log(`Adding group: ${JSON.stringify(defaultGroup)}`);
+    log(`Adding group: ${JSON.stringify(defaultGroup)}`, 'debug');
     await writeDatabase(data);
     return { success: true, data: defaultGroup };
   } catch (error) {
-    console.error("Error adding group:", error.message, error.stack);
+    log("Error adding group: " + error.message, 'error');
     throw error;
   }
 }
@@ -674,6 +742,7 @@ async function addGroup(groupData) {
         level_roles: [],
         orders: [],
       };
+      log("Resetting database to initial state", 'info');
       console.log("Resetting database to initial state");
       await writeDatabase(initialData);
       return { success: true, message: "Main database reset successfully" };
@@ -957,6 +1026,61 @@ async function addGroup(groupData) {
       return [];
     }
   }
+  const fiturPermissionGroup = async (groupId) => {
+    try {
+      const db = await readDatabase();
+      if (!db.groups) {
+        return { success: false, message: "Tidak ada data grup", activeFeatures: [] };
+      }
+      
+      const group = db.groups.find((group) => group.group_id === groupId);
+      if (!group) {
+        return { success: false, message: "Grup tidak ditemukan", activeFeatures: [] };
+      }
+      
+      // Filter hanya fitur yang aktif (bernilai 1)
+      const activeFeatures = {};
+      const featureKeys = [
+        "anti_bot", "anti_delete_message", "anti_hidden_tag", 
+        "anti_group_link", "anti_view_once", "auto_sticker", 
+        "log_detection", "auto_level_up", "mute_bot", 
+        "anti_country", "welcome_message", "goodbye_message"
+      ];
+      
+      featureKeys.forEach(key => {
+        if (group[key] === 1) {
+          activeFeatures[key] = true;
+        }
+      });
+      
+      return { 
+        success: true, 
+        groupInfo: {
+          id: group.id,
+          group_id: group.group_id,
+          group_name: group.group_name,
+          owner_id: group.owner_id,
+          total_members: group.total_members,
+          bot_is_admin: group.bot_is_admin === 1,
+          premium_status: group.premium_status === 1,
+          sewa_status: group.sewa_status === 1,
+          language: group.language,
+          level: group.level || 1,
+          total_xp: group.total_xp || 0,
+          current_xp: group.current_xp || 0,
+          xp_to_next_level: group.xp_to_next_level || 1000,
+          description: group.description || null,
+          created_at: group.created_at,
+          updated_at: group.updated_at || group.created_at
+        },
+        activeFeatures 
+      };
+    } catch (error) {
+      log("Error mengambil data fitur grup: " + error.message, 'error');
+      return { success: false, message: "Error mengambil data fitur grup", activeFeatures: [] };
+    }
+  }
+  
 
   initializeDatabase().catch((err) => {
     console.error("Failed to initialize database on module load:", err);
@@ -987,4 +1111,7 @@ async function addGroup(groupData) {
     getUserLevel,
     updateUserLevel,
     getGroupLeaderboard,
+    fiturPermissionGroup,
+    readDatabase,
+    writeDatabase,
   };

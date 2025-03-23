@@ -1,1033 +1,408 @@
-const { botLogger } = require("../utils/logger");
-const db = require("../../database/confLowDb/lowdb"); // Impor database AJV
-const { formatNumber } = require("../utils/helper");
+const { getLeaderboard, getUserData, getRequiredXP, addXP, normalizeUserId } = require('../leveling');
+const { botLogger } = require('../utils/logger');
+const Canvas = require('canvas');
+const fs = require('fs');
+const path = require('path');
+const db = require("../../database/confLowDb/lowdb"); // Path database yang benar
 
-// XP Configuration
-const XP_CONFIG = {
-  MESSAGE: {
-    BASE: 5,
-    COOLDOWN: 60, // detik
-    DAILY_CAP: 200,
-  },
-  COMMAND: {
-    BASE: 10,
-    DAILY_CAP: 100,
-  },
-  GAME: {
-    WIN: 50,
-    LOSE: 10,
-  },
-};
-
-// Fungsi untuk menghitung XP yang dibutuhkan untuk level berikutnya
-const getRequiredXP = (level) => {
-  return Math.floor(100 * Math.pow(1.5, level - 1)); // Formula sederhana: 100 * (1.5^(level-1))
-};
-
-// Fungsi untuk normalisasi ID (menghilangkan @s.whatsapp.net)
-function normalizeUserId(userId) {
-  if (!userId) return null;
-  return userId.split('@')[0];
-}
-
-// Fungsi untuk update XP user
-async function updateUserXP(userId, xp, activityType) {
-  try {
-    // Normalisasi ID
-    const normalizedId = normalizeUserId(userId);
-    if (!normalizedId) {
-      botLogger.error("Invalid userId for XP update");
-      return false;
-    }
-    
-    let user = await db.getUser(normalizedId);
-    if (!user) {
-      const result = await db.addUser({ user_id: normalizedId });
-      user = result.data;
-      botLogger.info(`Created new user ${normalizedId} for XP tracking`);
-    }
-
-    // Update XP sesuai jenis aktivitas
-    user.experience = (user.experience || 0) + xp;
-    user.total_xp = (user.total_xp || 0) + xp;
-    user.daily_xp = (user.daily_xp || 0) + xp;
-    user.weekly_xp = (user.weekly_xp || 0) + xp;
-    user.last_message_xp = new Date().toISOString();
-
-    // Cek level up
-    let requiredXP = getRequiredXP(user.level || 1);
-    let leveledUp = false;
-    let newLevel = user.level || 1;
-    
-    while (user.experience >= requiredXP) {
-      user.experience -= requiredXP;
-      newLevel += 1;
-      leveledUp = true;
-      requiredXP = getRequiredXP(newLevel);
-      botLogger.info(`User ${normalizedId} naik ke level ${newLevel}`);
-    }
-
-    // Update user data
-    await db.updateUser(normalizedId, {
-      experience: user.experience,
-      total_xp: user.total_xp,
-      daily_xp: user.daily_xp,
-      weekly_xp: user.weekly_xp,
-      level: newLevel,
-      last_message_xp: user.last_message_xp,
-      updated_at: new Date().toISOString(),
-    });
-
-    return { success: true, leveledUp, newLevel };
-  } catch (error) {
-    botLogger.error("Leveling error:", error);
-    return { success: false, error: error.message };
-  }
-}
-
-// Fungsi untuk update data user di user_leveling
-async function ensureUserLeveling(userId) {
-  try {
-    // Normalisasi ID
-    const normalizedId = normalizeUserId(userId);
-    if (!normalizedId) {
-      botLogger.error("Invalid userId for ensureUserLeveling");
-      return false;
-    }
-    
-    // Dapatkan user dari database
-    const user = await db.getUser(normalizedId);
-    if (!user) {
-      botLogger.warn(`User ${normalizedId} tidak ditemukan untuk ditambahkan ke user_leveling`);
-      
-      // Buat user baru jika tidak ada
-      try {
-        const newUser = {
-          user_id: normalizedId,
-          username: normalizedId,
-          experience: 0,
-          level: 1,
-          total_xp: 0,
-          daily_xp: 0,
-          weekly_xp: 0,
-          total_messages: 0,
-          total_feature_usage: 0,
-          game_played: 0,
-          daily_streak: 0,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        
-        await db.addUser(newUser);
-        botLogger.info(`Created new user ${normalizedId} in ensureUserLeveling`);
-        return true;
-      } catch (addError) {
-        botLogger.error(`Error creating user: ${addError.message}`);
-        return false;
-      }
-    }
-    
-    return true;
-  } catch (error) {
-    botLogger.error("Error ensuring user leveling data:", error);
-    return false;
-  }
-}
-
-// Fungsi alternatif untuk mendapatkan semua user
-async function getAllUsersAlternative() {
-  try {
-    // Coba menggunakan fungsi getAllUsers jika tersedia
-    if (typeof db.getAllUsers === 'function') {
-      const users = await db.getAllUsers();
-      return users;
-    }
-    
-    // Coba menggunakan fungsi getUsers jika tersedia
-    if (typeof db.getUsers === 'function') {
-      const users = await db.getUsers();
-      return users;
-    }
-    
-    // Fallback: coba dapatkan daftar user IDs dari database langsung
-    // Catatan: ini tergantung pada implementasi database
-    if (typeof db.getUserIds === 'function') {
-      const userIds = await db.getUserIds();
-      const users = [];
-      for (const id of userIds) {
-        const user = await db.getUser(id);
-        if (user) users.push(user);
-      }
-      return users;
-    }
-    
-    // Fallback terakhir: cek di struktur database lain
-    // Log error dan gunakan array kosong jika tidak ada opsi lain
-    botLogger.warn("Tidak ada metode yang tersedia untuk mendapatkan semua user!");
-    return [];
-  } catch (error) {
-    botLogger.error("Error getting all users:", error);
-    return [];
-  }
-}
-
-// Fungsi untuk mendapatkan ranking
-async function getRank(userId) {
-  try {
-    // Normalisasi ID
-    const normalizedId = normalizeUserId(userId);
-    if (!normalizedId) return "N/A";
-    
-    // Dapatkan semua user
-    const users = await getAllUsersAlternative();
-    if (!users || users.length === 0) {
-      botLogger.warn("getAllUsers returned empty data, ranking tidak dapat ditentukan");
-      return "N/A";
-    }
-    
-    // Urutkan berdasarkan total_xp
-    const sortedUsers = users.sort(
-      (a, b) => (b.total_xp || 0) - (a.total_xp || 0)
-    );
-    
-    // Cari peringkat user
-    const rank = sortedUsers.findIndex((u) => normalizeUserId(u.user_id) === normalizedId) + 1;
-    return rank > 0 ? rank : "N/A";
-  } catch (error) {
-    botLogger.error("Error getting rank:", error);
-    return "N/A";
-  }
-}
-
-// Sistem Achievement
-const ACHIEVEMENTS = [
-  { id: "msg100", name: "Chatter Box", type: "message", target: 100, reward_xp: 50, description: "Kirim 100 pesan" },
-  { id: "msg500", name: "Social Butterfly", type: "message", target: 500, reward_xp: 150, description: "Kirim 500 pesan" },
-  { id: "msg1000", name: "Komunikator", type: "message", target: 1000, reward_xp: 300, description: "Kirim 1000 pesan" },
-  { id: "cmd50", name: "Command Master", type: "command", target: 50, reward_xp: 100, description: "Gunakan 50 perintah" },
-  { id: "cmd100", name: "Power User", type: "command", target: 100, reward_xp: 200, description: "Gunakan 100 perintah" },
-  { id: "game10", name: "Casual Gamer", type: "game", target: 10, reward_xp: 80, description: "Mainkan game 10 kali" },
-  { id: "game50", name: "Game Addict", type: "game", target: 50, reward_xp: 200, description: "Mainkan game 50 kali" },
-  { id: "game100", name: "Pro Gamer", type: "game", target: 100, reward_xp: 350, description: "Mainkan game 100 kali" },
-  { id: "daily7", name: "Week Streak", type: "daily", target: 7, reward_xp: 300, description: "Klaim daily reward 7 hari berturut-turut" },
-  { id: "daily30", name: "Month Streak", type: "daily", target: 30, reward_xp: 1000, description: "Klaim daily reward 30 hari berturut-turut" },
-  { id: "lvl5", name: "Apprentice", type: "level", target: 5, reward_xp: 200, description: "Capai level 5" },
-  { id: "lvl10", name: "Expert", type: "level", target: 10, reward_xp: 500, description: "Capai level 10" },
-];
-
-// Fungsi untuk cek dan berikan achievement
-async function checkAchievements(userId, activityType) {
-  try {
-    // Normalisasi ID
-    const normalizedId = normalizeUserId(userId);
-    if (!normalizedId) {
-      botLogger.error("Invalid userId for checkAchievements");
-      return { earned: false, error: "Invalid user ID" };
-    }
-    
-    // Dapatkan data user
-    const user = await db.getUser(normalizedId);
-    if (!user) {
-      botLogger.warn(`User ${normalizedId} tidak ditemukan untuk checkAchievements`);
-      return { earned: false, error: "User not found" };
-    }
-    
-    // Dapatkan atau buat objek achievements user
-    const userAchievements = user.achievements || {};
-    
-    // Siapkan data aktivitas user dengan nilai default jika tidak ada
-    const activityCount = {
-      message: user.total_messages || 0,
-      command: user.total_feature_usage || 0,
-      game: user.game_played || 0,
-      daily: user.daily_streak || 0,
-      level: user.level || 1
-    };
-    
-    // Log data aktivitas untuk debugging
-    botLogger.info(`Activity check for ${normalizedId} - Type: ${activityType}, Count: ${activityCount[activityType]}`);
-    
-    // Filter achievement berdasarkan tipe aktivitas
-    let eligibleAchievements = [];
-    if (activityType === 'all') {
-      // Periksa semua jenis achievement
-      eligibleAchievements = ACHIEVEMENTS;
-    } else {
-      // Hanya periksa achievement sesuai tipe aktivitas
-      eligibleAchievements = ACHIEVEMENTS.filter(a => a.type === activityType);
-    }
-    
-    let earnedXP = 0;
-    let newAchievements = [];
-    
-    for (const achievement of eligibleAchievements) {
-      // Skip jika achievement sudah diperoleh
-      if (userAchievements[achievement.id]) continue;
-      
-      // Cek apakah target tercapai
-      const activityValue = activityCount[achievement.type] || 0;
-      
-      if (activityValue >= achievement.target) {
-        // Tandai achievement sebagai diperoleh
-        userAchievements[achievement.id] = {
-          earned: true,
-          earned_at: new Date().toISOString()
-        };
-        
-        earnedXP += achievement.reward_xp;
-        newAchievements.push(achievement);
-        
-        botLogger.info(`User ${normalizedId} earned achievement: ${achievement.name} (${achievement.type}: ${activityValue}/${achievement.target})`);
-      }
-    }
-    
-    // Update database jika ada achievement baru
-    if (newAchievements.length > 0) {
-      await db.updateUser(normalizedId, {
-        achievements: userAchievements,
-        updated_at: new Date().toISOString()
-      });
-      
-      // Berikan XP reward
-      if (earnedXP > 0) {
-        await updateUserXP(normalizedId, earnedXP, "achievement");
-      }
-      
-      return {
-        earned: true,
-        achievements: newAchievements,
-        xp: earnedXP
-      };
-    }
-    
-    return { earned: false };
-  } catch (error) {
-    botLogger.error("Achievement error:", error);
-    return { earned: false, error: error.message };
-  }
-}
-
-// Fungsi untuk membuat progress bar
-function createProgressBar(percentage) {
-  const filled = Math.floor(percentage / 10);
-  const empty = 10 - filled;
-  return "▰".repeat(filled) + "▱".repeat(empty);
-}
-
-// Fungsi untuk mencatat aktivitas user
-async function trackUserActivity(userId, activityType, amount = 1) {
-  try {
-    // Normalisasi ID
-    const normalizedId = normalizeUserId(userId);
-    if (!normalizedId) return { updated: false, error: "Invalid user ID" };
-    
-    // Dapatkan user dari database
-    const user = await db.getUser(normalizedId);
-    if (!user) {
-      botLogger.warn(`User ${normalizedId} tidak ditemukan untuk tracking aktivitas`);
-      // Buat user baru
-      await ensureUserLeveling(normalizedId);
-      return { updated: false, error: "User not found" };
-    }
-    
-    // Update counter sesuai tipe aktivitas
-    const update = {};
-    
-    switch(activityType) {
-      case 'message':
-        update.total_messages = (user.total_messages || 0) + amount;
-        break;
-      case 'command':
-        update.total_feature_usage = (user.total_feature_usage || 0) + amount;
-        break;
-      case 'game':
-        update.game_played = (user.game_played || 0) + amount;
-        break;
-      case 'daily':
-        update.daily_streak = (user.daily_streak || 0) + amount;
-        break;
-    }
-    
-    // Update terakhir digunakan
-    update.updated_at = new Date().toISOString();
-    
-    // Update database
-    await db.updateUser(normalizedId, update);
-    
-    // Cek achievement setiap kali ada aktivitas
-    const achievementResult = await checkAchievements(normalizedId, activityType);
-    
-    // Berikan notifikasi jika mendapat achievement baru
-    if (achievementResult.earned && achievementResult.achievements.length > 0) {
-      return {
-        updated: true,
-        achievements: achievementResult.achievements,
-        xp: achievementResult.xp
-      };
-    }
-    
-    return { updated: true };
-  } catch (error) {
-    botLogger.error(`Error tracking ${activityType} activity:`, error);
-    return { updated: false, error: error.message };
-  }
-}
-
-// Command: !level untuk Baileys
+// Command untuk melihat rank user
 global.Oblixn.cmd({
-  name: "level",
-  alias: ["rank", "xp"],
-  desc: "Melihat level dan XP kamu",
-  category: "rpg",
-  async exec(msg, { args, sock }) {
+  name: 'rank',
+  alias: ['level', 'xp', 'lvl'],
+  desc: 'Melihat level dan XP kamu atau pengguna lain',
+  category: 'leveling',
+  usage: '@user (opsional)',
+  exec: async (msg, { args, sock }) => {
     try {
-      // Ambil ID pengirim
-      const userId = msg.sender;
-      const normalizedId = userId.split('@')[0];
-      
-      // Dapatkan ID grup jika pesan dari grup
-      let groupId = null;
-      const isGroup = msg.from && msg.from.endsWith('@g.us');
-      
-      if (isGroup) {
-        groupId = msg.from;
-      } else {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Perintah ini hanya dapat digunakan di dalam grup!" 
-        }, { quoted: msg });
+      // Tentukan ID target (pengirim pesan atau user yang di-tag)
+      let targetId = msg.sender;
+      if (msg.mentions && msg.mentions.length > 0) {
+        targetId = msg.mentions[0];
       }
       
-      // Dapatkan data level pengguna
-      const userData = await db.getUser(normalizedId);
+      // Dapatkan data user
+      const userData = await getUserData(targetId);
       if (!userData) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Data level kamu belum tersedia. Silakan kirim beberapa pesan terlebih dahulu!" 
-        }, { quoted: msg });
+        return await msg.reply('Data pengguna tidak ditemukan.');
       }
       
-      // Hitung XP untuk level berikutnya
-      const nextLevelXP = getRequiredXP(userData.level || 1);
+      // Buat rank card dengan Canvas
+      const rankCard = await createRankCard(userData, targetId, msg.pushName);
+      if (!rankCard) {
+        return await msg.reply('Gagal membuat kartu rank.');
+      }
       
-      // Buat progress bar
-      const progress = Math.min(Math.floor((userData.experience / nextLevelXP) * 100), 100);
-      const progressBar = createProgressBar(progress);
-      
-      // Dapatkan peringkat di grup
-      const rank = await getRank(normalizedId);
-      
-      // Buat pesan dengan informasi level
-      const levelInfo = `
-🎮 *Level Info* 🎮
-
-👤 *Username:* ${msg.pushName || 'User'}
-📊 *Level:* ${userData.level || 1}
-⭐ *XP:* ${userData.experience}/${nextLevelXP}
-📈 *Progress:* ${progressBar} ${progress}%
-🏆 *Peringkat:* #${rank}
-
-💫 *Total Pesan:* ${userData.total_messages || 0}
-📆 *Streak Aktif:* ${userData.daily_streak || 0} hari
-      `;
-
-      await sock.sendMessage(msg.from, { text: levelInfo }, { quoted: msg });
-    } catch (error) {
-      console.error("Error dalam command level:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Terjadi kesalahan saat mengambil data level: " + error.message 
+      // Kirim sebagai gambar
+      await sock.sendMessage(msg.from, {
+        image: rankCard,
+        caption: `🎮 *Rank Card* 🎮\n\nLevel: ${userData.level}\nXP: ${userData.experience}/${getRequiredXP(userData.level)}\nTotal XP: ${userData.total_xp}`,
       }, { quoted: msg });
-    }
-  },
-});
-
-// Command: !leaderboard
-global.Oblixn.cmd({
-  name: "leaderboard",
-  alias: ["lb", "top"],
-  desc: "Lihat peringkat top level pengguna",
-  category: "game",
-  async exec(msg, { args, sock }) {
-    try {
-      // Dapatkan ID grup
-      const isGroup = msg.from && msg.from.endsWith('@g.us');
-      let groupId;
       
-      if (isGroup) {
-        groupId = msg.from;
-      } else {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Perintah ini hanya dapat digunakan di dalam grup!" 
-        }, { quoted: msg });
-      }
-      
-      // Dapatkan daftar top users
-      const users = await getAllUsersAlternative();
-      
-      if (!users || users.length === 0) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Belum ada data level di grup ini!" 
-        }, { quoted: msg });
-      }
-      
-      // Filter user yang ada di grup ini
-      // Note: Jika tidak ada cara untuk mengecek apakah user ada di grup,
-      // kita gunakan semua user
-      const leaderboard = users
-        .sort((a, b) => (b.total_xp || 0) - (a.total_xp || 0))
-        .slice(0, 10);
-      
-      // Buat pesan leaderboard
-      let leaderboardMsg = '🏆 *PAPAN PERINGKAT* 🏆\n\n';
-      
-      // Tambahkan emoji sesuai peringkat
-      const rankEmojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
-      
-      // Loop untuk menampilkan setiap user
-      for (let i = 0; i < leaderboard.length; i++) {
-        const user = leaderboard[i];
-        
-        // Dapatkan username
-        let username = 'User';
-        try {
-          // Coba ambil dari user_id
-          username = user.username || user.user_id.split('@')[0] || 'User';
-        } catch (error) {
-          console.error('Error getting username:', error);
-        }
-        
-        // Ambil emoji peringkat
-        const rankEmoji = rankEmojis[i] || `${i + 1}.`;
-        
-        // Tambahkan ke pesan
-        leaderboardMsg += `${rankEmoji} *${username}*\n`;
-        leaderboardMsg += `   Level: ${user.level || 1} | XP: ${user.total_xp || 0}\n`;
-        leaderboardMsg += `   Pesan: ${user.total_messages || 0}\n\n`;
-      }
-      
-      await sock.sendMessage(msg.from, { text: leaderboardMsg }, { quoted: msg });
+      // Log aktivitas
+      botLogger.info(`Command rank dijalankan oleh ${msg.pushName || msg.sender}`);
     } catch (error) {
-      console.error("Error dalam command leaderboard:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Terjadi kesalahan saat mengambil data leaderboard: " + error.message 
-      }, { quoted: msg });
-    }
-  },
-});
-
-// Command: !daily
-global.Oblixn.cmd({
-  name: "daily",
-  desc: "Klaim daily reward XP",
-  category: "game",
-  async exec(msg, { args, sock }) {
-    try {
-      const userId = msg.sender;
-      const normalizedId = normalizeUserId(userId);
-      
-      if (!normalizedId) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Format ID tidak valid!" 
-        }, { quoted: msg });
-      }
-      
-      // Pastikan data user ada di user_leveling
-      await ensureUserLeveling(normalizedId);
-      
-      const user = await db.getUser(normalizedId);
-      if (!user) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Kamu belum terdaftar!" 
-        }, { quoted: msg });
-      }
-
-      const now = new Date();
-      const lastDaily = user.last_daily ? new Date(user.last_daily) : null;
-
-      if (lastDaily && now.toDateString() === lastDaily.toDateString()) {
-        // Hitung waktu reset (besok pukul 00:00)
-        const tomorrow = new Date(now);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        tomorrow.setHours(0, 0, 0, 0);
-        
-        const timeLeft = tomorrow - now;
-        const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-        const minutesLeft = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-        
-        return await sock.sendMessage(msg.from, { 
-          text: `❌ Kamu sudah mengklaim daily reward hari ini!\nCoba lagi dalam ${hoursLeft} jam ${minutesLeft} menit.` 
-        }, { quoted: msg });
-      }
-
-      // Periksa daily streak
-      let streak = 1;
-      let streakBonus = 0;
-      
-      if (lastDaily) {
-        // Periksa apakah daily reward diklaim kemarin
-        const yesterday = new Date(now);
-        yesterday.setDate(yesterday.getDate() - 1);
-        
-        if (lastDaily.toDateString() === yesterday.toDateString()) {
-          // Streak berlanjut
-          streak = (user.daily_streak || 0) + 1;
-          // Bonus 10 XP per hari streak, maksimal 100
-          streakBonus = Math.min(streak * 10, 100);
-        } else {
-          // Streak terputus
-          streak = 1;
-          botLogger.info(`Daily streak reset for ${normalizedId} - last claim: ${lastDaily.toDateString()}`);
-        }
-      }
-
-      // Basic XP + streak bonus
-      const dailyXP = 100 + streakBonus; 
-      
-      // Update XP dan data user secara bersamaan
-      const xpResult = await updateUserXP(normalizedId, dailyXP, "daily");
-      
-      // Update data user
-      await db.updateUser(normalizedId, {
-        last_daily: now.toISOString(),
-        daily_streak: streak,
-        updated_at: now.toISOString(),
-      });
-      
-      // Track aktivitas daily untuk achievement
-      const activityResult = await trackUserActivity(normalizedId, "daily");
-      
-      // Buat pesan reward
-      let rewardMessage = `🎁 *Daily Reward!*\n\n`;
-      rewardMessage += `💰 XP Dasar: +100\n`;
-      
-      if (streakBonus > 0) {
-        rewardMessage += `🔥 Streak Bonus (${streak} hari): +${streakBonus}\n`;
-      }
-      
-      rewardMessage += `📊 Total: +${dailyXP} XP\n`;
-      
-      // Pesan streak
-      if (streak > 1) {
-        rewardMessage += `\n🔄 Streak saat ini: ${streak} hari\n`;
-      }
-      
-      // Tampilkan achievement yang diperoleh
-      if (activityResult.achievements && activityResult.achievements.length > 0) {
-        rewardMessage += `\n🏆 *Achievement Baru!*\n`;
-        for (const ach of activityResult.achievements) {
-          rewardMessage += `✨ ${ach.name}: +${ach.reward_xp} XP\n`;
-        }
-      }
-      
-      // Notifikasi level up jika ada
-      if (xpResult.leveledUp) {
-        rewardMessage += `\n🎖️ *LEVEL UP!* 🎖️\n`;
-        rewardMessage += `Selamat! Level kamu naik menjadi *Level ${xpResult.newLevel}*\n`;
-      }
-
-      await sock.sendMessage(msg.from, { text: rewardMessage }, { quoted: msg });
-    } catch (error) {
-      botLogger.error("Daily reward error:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Gagal mengklaim daily reward: " + error.message 
-      }, { quoted: msg });
-    }
-  },
-});
-
-// Command: !achievements
-global.Oblixn.cmd({
-  name: "achievements",
-  alias: ["achievement", "ach"],
-  desc: "Lihat achievement yang kamu dapatkan",
-  category: "rpg",
-  async exec(msg, { args, sock }) {
-    try {
-      const userId = msg.sender;
-      const normalizedId = normalizeUserId(userId);
-      
-      if (!normalizedId) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Format ID tidak valid!" 
-        }, { quoted: msg });
-      }
-      
-      await ensureUserLeveling(normalizedId);
-      
-      const user = await db.getUser(normalizedId);
-      if (!user) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Kamu belum terdaftar!" 
-        }, { quoted: msg });
-      }
-      
-      // Dapatkan achievement user
-      const userAchievements = user.achievements || {};
-      
-      // Buat pesan
-      let message = "🏆 *Achievement List* 🏆\n\n";
-      
-      // Hitung jumlah achievement yang sudah diperoleh
-      let earnedCount = 0;
-      
-      // Grupkan achievements berdasarkan kategori
-      const categories = {
-        message: "💬 Pesan",
-        command: "⌨️ Perintah",
-        game: "🎮 Game",
-        daily: "📅 Daily",
-        level: "📊 Level"
-      };
-      
-      // Buat grup
-      const groupedAchievements = {};
-      for (const type in categories) {
-        groupedAchievements[type] = ACHIEVEMENTS.filter(a => a.type === type);
-      }
-      
-      // Loop setiap kategori
-      for (const type in categories) {
-        const achievements = groupedAchievements[type];
-        if (achievements.length > 0) {
-          message += `\n*${categories[type]}*\n`;
-          
-          // Loop achievements dalam kategori
-          for (const ach of achievements) {
-            const isEarned = userAchievements[ach.id]?.earned || false;
-            if (isEarned) earnedCount++;
-            
-            // Tampilkan status achievement
-            message += `${isEarned ? '✅' : '❌'} *${ach.name}*\n`;
-            message += `   ${ach.description}\n`;
-            
-            // Tampilkan progres jika belum dicapai
-            if (!isEarned) {
-              const activityType = ach.type;
-              const currentValue = user[{
-                message: 'total_messages',
-                command: 'total_feature_usage',
-                game: 'game_played',
-                daily: 'daily_streak',
-                level: 'level'
-              }[activityType]] || 0;
-              
-              const progress = Math.min(Math.floor((currentValue / ach.target) * 100), 99);
-              message += `   Progres: ${currentValue}/${ach.target} (${progress}%)\n`;
-            }
-            
-            message += `   Reward: ${ach.reward_xp} XP\n\n`;
-          }
-        }
-      }
-      
-      // Tampilkan progres keseluruhan
-      message += `\n📈 *Progress Total*: ${earnedCount}/${ACHIEVEMENTS.length} (${Math.floor(earnedCount / ACHIEVEMENTS.length * 100)}%)`;
-      
-      await sock.sendMessage(msg.from, { text: message }, { quoted: msg });
-    } catch (error) {
-      botLogger.error("Achievement command error:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Gagal mengambil data achievement: " + error.message 
-      }, { quoted: msg });
+      botLogger.error(`Error pada command rank: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command rank.');
     }
   }
 });
 
-// Command: !resetlevel (admin only)
+// Command untuk melihat leaderboard
 global.Oblixn.cmd({
-  name: "resetlevel",
-  desc: "Reset level pengguna (admin only)",
-  category: "owner",
-  async exec(msg, { args, sock }) {
+  name: 'leaderboard',
+  alias: ['lb', 'top', 'topxp', 'toplevel'],
+  desc: 'Melihat daftar pengguna dengan XP tertinggi',
+  category: 'leveling',
+  usage: '[jumlah=10]',
+  exec: async (msg, { args, sock }) => {
     try {
-      // Cek apakah pengguna adalah admin
-      if (!global.Oblixn.isOwner(msg.sender)) {
-        return await msg.reply("❌ Hanya admin yang dapat menggunakan perintah ini!");
+      // Tentukan jumlah user yang ditampilkan (default 10)
+      const limit = parseInt(args[0]) || 10;
+      if (limit < 1 || limit > 50) {
+        return await msg.reply('Jumlah harus antara 1-50.');
       }
       
-      // Cek apakah ada target user
-      if (!args || args.length === 0) {
-        return await msg.reply("❌ Format: !resetlevel <user_id>");
+      // Dapatkan data leaderboard
+      const leaderboard = await getLeaderboard(limit);
+      if (!leaderboard || leaderboard.length === 0) {
+        return await msg.reply('Belum ada data leaderboard.');
       }
       
-      // Ambil target user
-      let targetUser = args[0];
-      if (targetUser.includes("@")) {
-        targetUser = normalizeUserId(targetUser);
+      // Format pesan leaderboard
+      let leaderboardMsg = `🏆 *TOP ${limit} LEADERBOARD* 🏆\n\n`;
+      
+      leaderboard.forEach((user, index) => {
+        // Tambahkan emoji berdasarkan posisi
+        let position;
+        if (index === 0) position = '🥇';
+        else if (index === 1) position = '🥈';
+        else if (index === 2) position = '🥉';
+        else position = `${index + 1}.`;
+        
+        leaderboardMsg += `${position} ${user.username || `@${user.user_id}`}\n`;
+        leaderboardMsg += `   Level: ${user.level} | XP: ${user.total_xp}\n\n`;
+      });
+      
+      // Tambahkan posisi pengirim pesan
+      const senderPosition = await getUserPosition(msg.sender);
+      if (senderPosition) {
+        leaderboardMsg += `\n📊 Posisi kamu: #${senderPosition.position} dari ${senderPosition.total} pengguna`;
       }
       
-      // Reset level dan XP user
-      await db.updateUser(targetUser, {
-        experience: 0,
+      await msg.reply(leaderboardMsg);
+      
+      // Log aktivitas
+      botLogger.info(`Command leaderboard dijalankan oleh ${msg.pushName || msg.sender}`);
+    } catch (error) {
+      botLogger.error(`Error pada command leaderboard: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command leaderboard.');
+    }
+  }
+});
+
+// Command untuk memberikan XP kepada pengguna lain (khusus admin/owner)
+global.Oblixn.cmd({
+  name: 'givexp',
+  alias: ['addxp'],
+  desc: 'Memberikan XP kepada pengguna (khusus admin/owner)',
+  category: 'leveling',
+  usage: '@user jumlah_xp',
+  isAdmin: true,
+  isOwner: true,
+  exec: async (msg, { args, sock }) => {
+    try {
+      // Validasi input
+      if (!msg.mentions || msg.mentions.length === 0) {
+        return await msg.reply('Tag pengguna yang ingin diberi XP.');
+      }
+      
+      const targetId = msg.mentions[0];
+      const xpToAdd = parseInt(args[1]);
+      
+      if (isNaN(xpToAdd) || xpToAdd < 1) {
+        return await msg.reply('Jumlah XP harus berupa angka positif.');
+      }
+      
+      // Tambahkan XP langsung dari modul leveling
+      const result = await addXP(targetId, xpToAdd, sock, msg.from);
+      
+      // Kirim pesan konfirmasi
+      await msg.reply(`Berhasil menambahkan ${xpToAdd} XP kepada @${targetId.split('@')[0]}.${result.leveledUp ? `\n\nUser naik level dari ${result.oldLevel} ke ${result.newLevel}! 🎉` : ''}`);
+      
+      // Log aktivitas
+      botLogger.info(`${msg.pushName || msg.sender} memberikan ${xpToAdd} XP kepada ${targetId}`);
+    } catch (error) {
+      botLogger.error(`Error pada command givexp: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command givexp.');
+    }
+  }
+});
+
+// Command untuk mengatur ulang XP/level pengguna (khusus owner)
+global.Oblixn.cmd({
+  name: 'resetrank',
+  alias: ['resetlevel', 'resetxp'],
+  desc: 'Mengatur ulang level dan XP pengguna (khusus owner)',
+  category: 'leveling',
+  usage: '@user',
+  isOwner: true,
+  exec: async (msg, { args, sock }) => {
+    try {
+      // Validasi input
+      if (!msg.mentions || msg.mentions.length === 0) {
+        return await msg.reply('Tag pengguna yang ingin direset levelnya.');
+      }
+      
+      const targetId = msg.mentions[0];
+      const normalizedId = normalizeUserId(targetId);
+      
+      // Reset level dan XP
+      await db.updateUser(normalizedId, {
         level: 1,
+        experience: 0,
         total_xp: 0,
         daily_xp: 0,
         weekly_xp: 0,
-        updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       });
       
-      await msg.reply(`✅ Level dan XP user ${targetUser} telah direset ke level 1`);
+      // Kirim pesan konfirmasi
+      await msg.reply(`Level dan XP @${normalizedId} telah direset ke level 1.`);
+      
+      // Log aktivitas
+      botLogger.info(`${msg.pushName || msg.sender} mereset level ${targetId}`);
     } catch (error) {
-      botLogger.error("Reset level error:", error);
-      await msg.reply("❌ Gagal reset level: " + error.message);
+      botLogger.error(`Error pada command resetrank: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command resetrank.');
     }
   }
 });
 
-// Ekspor fungsi untuk digunakan di file lain
-global.Oblixn.trackUserActivity = trackUserActivity;
-global.Oblixn.updateUserXP = updateUserXP;
-global.Oblixn.getRequiredXP = getRequiredXP;
-global.Oblixn.checkAchievements = checkAchievements;
+// Command untuk melihat informasi sistem leveling
+global.Oblixn.cmd({
+  name: 'levelinfo',
+  alias: ['xpinfo', 'levelhelp'],
+  desc: 'Melihat informasi tentang sistem leveling',
+  category: 'leveling',
+  exec: async (msg, { args, sock }) => {
+    try {
+      const levelInfo = `📊 *SISTEM LEVELING BOT* 📊
 
-// Sistem Level Roles - Tingkatan berdasarkan level user
-const LEVEL_ROLES = [
-  { level: 1, role: "Pemula", emoji: "🌱", bonus: 0 },
-  { level: 5, role: "Petualang", emoji: "🗺️", bonus: 5 },
-  { level: 10, role: "Veteran", emoji: "⚔️", bonus: 10 },
-  { level: 15, role: "Master", emoji: "🎯", bonus: 15 },
-  { level: 20, role: "Grand Master", emoji: "👑", bonus: 20 },
-  { level: 25, role: "Legend", emoji: "🏆", bonus: 25 },
-  { level: 30, role: "Mythical", emoji: "🌟", bonus: 30 },
-  { level: 40, role: "Immortal", emoji: "⚡", bonus: 40 },
-  { level: 50, role: "Divine", emoji: "🔱", bonus: 50 },
-];
+🔹 *Cara Mendapatkan XP:*
+- Mengirim pesan: +5 XP
+- Menggunakan command: +10 XP
+- Bermain game: +20 XP
+- Memenangkan game: +50 XP
+- Daily claim: +20 XP
 
-// Fungsi untuk mendapatkan role berdasarkan level
-function getLevelRole(level) {
-  // Default role
-  let role = LEVEL_ROLES[0];
-  
-  // Temukan role tertinggi yang dimiliki
-  for (let i = LEVEL_ROLES.length - 1; i >= 0; i--) {
-    if (level >= LEVEL_ROLES[i].level) {
-      role = LEVEL_ROLES[i];
-      break;
+🔹 *Perintah Leveling:*
+- *!rank* - Melihat level & XP kamu
+- *!rank @user* - Melihat level pengguna lain
+- *!leaderboard* - Top 10 user dengan XP tertinggi
+- *!leaderboard 20* - Top 20 user dengan XP tertinggi
+- *!daily* - Klaim XP harian
+- *!levelinfo* - Informasi tentang sistem leveling
+
+🔸 *Benefit Level Tinggi:*
+- Lebih banyak limit command per hari
+- Akses ke fitur khusus
+- Status di leaderboard global
+
+Level up akan diumumkan secara otomatis saat kamu mencapai XP yang cukup.`;
+
+      await msg.reply(levelInfo);
+      
+      // Log aktivitas
+      botLogger.info(`Command levelinfo dijalankan oleh ${msg.pushName || msg.sender}`);
+    } catch (error) {
+      botLogger.error(`Error pada command levelinfo: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command levelinfo.');
     }
   }
-  
-  return role;
-}
+});
 
-// Command: !roles - Menampilkan daftar role dan benefitnya
+// Command untuk klaim XP harian
 global.Oblixn.cmd({
-  name: "roles",
-  alias: ["levelroles", "ranks"],
-  desc: "Lihat daftar role berdasarkan level",
-  category: "rpg",
-  async exec(msg, { args, sock }) {
+  name: 'daily',
+  alias: ['dailyxp', 'claimxp'],
+  desc: 'Klaim XP harian kamu',
+  category: 'leveling',
+  exec: async (msg, { args, sock }) => {
     try {
       const userId = msg.sender;
       const normalizedId = normalizeUserId(userId);
       
-      // Pastikan data user ada di database
-      if (normalizedId) {
-        await ensureUserLeveling(normalizedId);
-      }
+      // Cek apakah sudah klaim hari ini
+      const userData = await getUserData(userId);
+      const lastClaim = userData.last_daily_claim;
       
-      // Ambil data user untuk menunjukkan role saat ini
-      let userRole = null;
-      if (normalizedId) {
-        const user = await db.getUser(normalizedId);
-        if (user) {
-          userRole = getLevelRole(user.level || 1);
+      // Periksa cooldown (24 jam)
+      const now = new Date();
+      if (lastClaim) {
+        const lastClaimDate = new Date(lastClaim);
+        const timeDiff = now - lastClaimDate;
+        const hoursDiff = timeDiff / (1000 * 60 * 60);
+        
+        if (hoursDiff < 24) {
+          const remaining = 24 - hoursDiff;
+          const hours = Math.floor(remaining);
+          const minutes = Math.floor((remaining - hours) * 60);
+          
+          return await msg.reply(`⏰ Kamu sudah klaim XP harian hari ini!\nTunggu ${hours} jam ${minutes} menit lagi.`);
         }
       }
       
-      // Buat pesan daftar role
-      let rolesMessage = "🔰 *DAFTAR LEVEL ROLES* 🔰\n\n";
-      rolesMessage += "Level up untuk mendapatkan role yang lebih tinggi dan bonus XP!\n\n";
+      // Tambahkan daily XP (20 XP)
+      const result = await addXP(userId, 20, sock, msg.from);
       
-      for (const role of LEVEL_ROLES) {
-        const isUserRole = userRole && userRole.level === role.level;
-        const prefix = isUserRole ? "👉 " : "   ";
-        
-        rolesMessage += `${prefix}${role.emoji} *${role.role}* (Level ${role.level}+)\n`;
-        rolesMessage += `   Bonus XP: +${role.bonus}% untuk semua aktivitas\n\n`;
-      }
-      
-      if (userRole) {
-        rolesMessage += `\n🎖️ *Role Kamu Saat Ini:* ${userRole.emoji} ${userRole.role}\n`;
-        rolesMessage += `📊 Bonus XP: +${userRole.bonus}%\n`;
-      }
-
-      await sock.sendMessage(msg.from, { text: rolesMessage }, { quoted: msg });
-    } catch (error) {
-      botLogger.error("Level roles error:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Gagal mendapatkan daftar roles: " + error.message 
-      }, { quoted: msg });
-    }
-  }
-});
-
-// Sistem Prestige - Reset level untuk mendapatkan bonus permanen
-// Command: !prestige - Mereset level menjadi 1 dengan bonus XP permanen
-global.Oblixn.cmd({
-  name: "prestige",
-  alias: ["ascend", "rebirth"],
-  desc: "Reset level untuk mendapatkan bonus XP permanen (Level 50+)",
-  category: "rpg",
-  async exec(msg, { args, sock }) {
-    try {
-      const userId = msg.sender;
-      const normalizedId = normalizeUserId(userId);
-      
-      if (!normalizedId) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Format ID tidak valid!" 
-        }, { quoted: msg });
-      }
-      
-      // Pastikan data user ada di database
-      await ensureUserLeveling(normalizedId);
-      
-      // Ambil data user
-      const user = await db.getUser(normalizedId);
-      if (!user) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Kamu belum terdaftar!" 
-        }, { quoted: msg });
-      }
-      
-      // Periksa level user
-      const currentLevel = user.level || 1;
-      const requiredLevel = 50; // Minimal level 50 untuk prestige
-      
-      if (currentLevel < requiredLevel) {
-        return await sock.sendMessage(msg.from, { 
-          text: `❌ Level kamu masih terlalu rendah! Kamu butuh minimal Level ${requiredLevel} untuk Prestige. Level kamu saat ini: ${currentLevel}` 
-        }, { quoted: msg });
-      }
-      
-      // Konfirmasi prestige
-      if (!args || args.length === 0 || args[0].toLowerCase() !== "confirm") {
-        const confirmMessage = `⚠️ *KONFIRMASI PRESTIGE* ⚠️\n\n` +
-          `Kamu akan melakukan RESET level dari Level ${currentLevel} kembali ke Level 1.\n\n` +
-          `Sebagai gantinya kamu akan mendapatkan:\n` +
-          `• Prestige +1 (Total: ${(user.prestige || 0) + 1})\n` +
-          `• Bonus XP permanen +10% untuk semua aktivitas\n` +
-          `• Lencana Prestige eksklusif di profil\n\n` +
-          `Semua XP, achievement, dan statistik lainnya tetap dipertahankan.\n\n` +
-          `Untuk mengonfirmasi, ketik: *!prestige confirm*`;
-        
-        return await sock.sendMessage(msg.from, { text: confirmMessage }, { quoted: msg });
-      }
-      
-      // Lakukan prestige
-      const newPrestigeLevel = (user.prestige || 0) + 1;
-      
-      // Update data user
+      // Update tanggal claim
       await db.updateUser(normalizedId, {
-        level: 1,
-        experience: 0,
-        prestige: newPrestigeLevel,
-        updated_at: new Date().toISOString(),
+        last_daily_claim: now.toISOString()
       });
       
       // Kirim pesan berhasil
-      const successMessage = `🌟 *PRESTIGE BERHASIL!* 🌟\n\n` +
-        `Kamu telah melakukan Prestige dan kembali ke Level 1.\n\n` +
-        `✅ Prestige Level baru: ${newPrestigeLevel}\n` +
-        `✅ Bonus XP permanen: +${newPrestigeLevel * 10}%\n\n` +
-        `Gunakan bonus XP ini untuk naik level lebih cepat!\n` +
-        `Gunakan !level atau !rankcard untuk melihat status barumu.`;
+      await msg.reply(`✅ Kamu telah menerima 20 XP harian!
+
+Level: ${result.level}
+XP: ${result.experience}/${getRequiredXP(result.level)}
+Total XP: ${result.total_xp}
+
+Kembali lagi besok untuk mendapatkan XP harian lagi!`);
       
-      await sock.sendMessage(msg.from, { text: successMessage }, { quoted: msg });
+      // Log aktivitas
+      botLogger.info(`${msg.pushName || userId} klaim daily XP`);
     } catch (error) {
-      botLogger.error("Prestige error:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Gagal melakukan prestige: " + error.message 
-      }, { quoted: msg });
+      botLogger.error(`Error pada command daily: ${error.message}`);
+      await msg.reply('Terjadi kesalahan saat menjalankan command daily.');
     }
   }
 });
 
-// Command: !rankcard (tampilan level yang lebih menarik)
-global.Oblixn.cmd({
-  name: "rankcard",
-  alias: ["rc", "levelcard"],
-  desc: "Tampilkan kartu level kamu dengan gaya menarik",
-  category: "rpg",
-  async exec(msg, { args, sock }) {
-    try {
-      const userId = msg.sender;
-      const normalizedId = normalizeUserId(userId);
-      
-      if (!normalizedId) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Format ID tidak valid!" 
-        }, { quoted: msg });
-      }
-      
-      // Pastikan data user ada di database
-      await ensureUserLeveling(normalizedId);
-      
-      // Ambil data user
-      const user = await db.getUser(normalizedId);
-      if (!user) {
-        return await sock.sendMessage(msg.from, { 
-          text: "❌ Kamu belum terdaftar!" 
-        }, { quoted: msg });
-      }
-
-      // Dapatkan data tambahan
-      const rank = await getRank(normalizedId);
-      const nextLevelXP = getRequiredXP(user.level || 1);
-      const currentXP = user.experience || 0;
-      const progress = (currentXP / nextLevelXP) * 100;
-      
-      // Buat kartu level dengan emoji
-      const usernameDisplay = msg.pushName || normalizedId;
-      const levelBar = createProgressBar(progress);
-      const totalXp = formatNumber(user.total_xp || 0);
-      
-      const playerTitles = [
-        { level: 1, title: "Pemula" },
-        { level: 5, title: "Petualang" },
-        { level: 10, title: "Veteran" },
-        { level: 15, title: "Master" },
-        { level: 20, title: "Grand Master" },
-        { level: 25, title: "Legend" },
-        { level: 30, title: "Mythical" },
-        { level: 40, title: "Immortal" },
-        { level: 50, title: "Divine" },
-      ];
-      
-      // Tentukan title berdasarkan level
-      let playerTitle = "Pemula";
-      for (let i = playerTitles.length - 1; i >= 0; i--) {
-        if ((user.level || 1) >= playerTitles[i].level) {
-          playerTitle = playerTitles[i].title;
-          break;
-        }
-      }
-      
-      // Format kartu rank
-      const rankCard = `
-╭─「 🎮 *RANK CARD* 🎮 」
-│ 
-│ 👤 *${usernameDisplay}*
-│ 🏆 *Rank:* #${rank}
-│ 📊 *Level:* ${user.level || 1} [${playerTitle}]
-│ ⭐ *XP:* ${currentXP}/${nextLevelXP}
-│ 
-│ 📈 *Progress Bar:*
-│ ${levelBar} ${Math.floor(progress)}%
-│ 
-│ 🔰 *Stats:*
-│ 💫 Total XP: ${totalXp}
-│ 📝 Pesan: ${user.total_messages || 0}
-│ 🎮 Games: ${user.game_played || 0}
-│ ⌨️ Commands: ${user.total_feature_usage || 0}
-│ 
-╰─「 👑 *LEVEL SYSTEM* 👑 」
-      `;
-
-      await sock.sendMessage(msg.from, { text: rankCard }, { quoted: msg });
-    } catch (error) {
-      botLogger.error("Rankcard error:", error);
-      await sock.sendMessage(msg.from, { 
-        text: "❌ Terjadi kesalahan saat membuat rank card: " + error.message 
-      }, { quoted: msg });
+// Fungsi untuk mendapatkan posisi user dalam leaderboard
+async function getUserPosition(userId) {
+  try {
+    const normalizedId = normalizeUserId(userId);
+    const data = await db.readDatabase();
+    const users = data.users || [];
+    
+    // Sortir users berdasarkan total XP
+    const sortedUsers = users
+      .filter(user => user.total_xp != null)
+      .sort((a, b) => (b.total_xp || 0) - (a.total_xp || 0));
+    
+    // Cari posisi pengguna
+    const userIndex = sortedUsers.findIndex(user => user.user_id === normalizedId);
+    
+    if (userIndex !== -1) {
+      return {
+        position: userIndex + 1,
+        total: sortedUsers.length
+      };
     }
-  },
-});
+    
+    return null;
+  } catch (error) {
+    botLogger.error(`Error mencari posisi user: ${error.message}`);
+    return null;
+  }
+}
+
+// Fungsi untuk membuat rank card dengan Canvas
+async function createRankCard(userData, userId, pushName) {
+  try {
+    // Set up Canvas
+    const canvas = Canvas.createCanvas(800, 300);
+    const ctx = canvas.getContext('2d');
+    
+    // Background
+    ctx.fillStyle = '#1f1f1f';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Border
+    ctx.strokeStyle = '#4f4f4f';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+    
+    // Username
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(pushName || `@${normalizeUserId(userId)}`, 250, 80);
+    
+    // Level
+    ctx.font = 'bold 60px Arial';
+    ctx.fillStyle = '#7289DA';
+    ctx.fillText(`Lv.${userData.level}`, 250, 160);
+    
+    // XP
+    const requiredXP = getRequiredXP(userData.level);
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#cccccc';
+    ctx.fillText(`XP: ${userData.experience}/${requiredXP}`, 250, 200);
+    
+    // XP Progress Bar
+    const barX = 250;
+    const barY = 220;
+    const barWidth = 500;
+    const barHeight = 30;
+    
+    // Background bar
+    ctx.fillStyle = '#4f4f4f';
+    ctx.fillRect(barX, barY, barWidth, barHeight);
+    
+    // Progress
+    const progress = Math.min(userData.experience / requiredXP, 1);
+    ctx.fillStyle = '#7289DA';
+    ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+    
+    // Total XP
+    ctx.font = '20px Arial';
+    ctx.fillStyle = '#cccccc';
+    ctx.fillText(`Total XP: ${userData.total_xp}`, 250, 280);
+    
+    // Profil Image (lingkaran)
+    try {
+      // Cek apakah file gambar default ada
+      const defaultProfilePath = path.join(process.cwd(), 'src', 'assets', 'default_profile.png');
+      
+      // Gunakan gambar default
+      let profilePic;
+      try {
+        profilePic = await Canvas.loadImage(defaultProfilePath);
+      } catch {
+        // Jika file tidak ditemukan, buat lingkaran berwarna sebagai pengganti
+        ctx.fillStyle = '#7289DA';
+        ctx.beginPath();
+        ctx.arc(125, 150, 100, 0, Math.PI * 2, true);
+        ctx.fill();
+      }
+      
+      if (profilePic) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(125, 150, 100, 0, Math.PI * 2, true);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(profilePic, 25, 50, 200, 200);
+        ctx.restore();
+      }
+    } catch (error) {
+      botLogger.error(`Error saat memuat gambar profil: ${error.message}`);
+      // Fallback: buat lingkaran berwarna
+      ctx.fillStyle = '#7289DA';
+      ctx.beginPath();
+      ctx.arc(125, 150, 100, 0, Math.PI * 2, true);
+      ctx.fill();
+    }
+    
+    // Convert to buffer
+    return canvas.toBuffer();
+  } catch (error) {
+    botLogger.error(`Error membuat rank card: ${error.message}`);
+    return null;
+  }
+}
+
+module.exports = {
+  getUserPosition,
+  createRankCard
+};

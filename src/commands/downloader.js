@@ -19,7 +19,6 @@ const {
 const { downloadTikTok, downloadTikTokV2, downloadTikTokV3 } = require('../lib/tiktokDownloader');
 const fileManager = require("../../config/memoryAsync/readfile"); // Impor instance langsung dari filemanager.js
 const { exec: youtubeDlExec } = require("youtube-dl-exec");
-const fetch = require("node-fetch");
 
 function formatDuration(seconds) {
   const hrs = Math.floor(seconds / 3600);
@@ -45,9 +44,7 @@ async function downloadFile(url, filePath) {
   ensureDirectoryExists(path.dirname(filePath));
   
   // Download file
-  const response = await axios({
-    method: 'GET',
-    url: url,
+  const response = await axios.get(url, {
     responseType: 'stream'
   });
   

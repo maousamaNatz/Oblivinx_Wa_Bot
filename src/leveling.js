@@ -1,6 +1,6 @@
-const db = require("../../database/confLowDb/lowdb"); // Impor database AJV dari lowdb.js
-const { botLogger } = require("../utils/logger");
-const levelUpgrade = require("../lib/levelUpgrade");
+const db = require("../database/confLowDb/lowdb"); // Impor database AJV dari lowdb.js
+const { botLogger } = require("./utils/logger");
+const levelUpgrade = require("./lib/levelUpgrade");
 
 // Fungsi untuk menghitung XP yang dibutuhkan agar user naik level
 function getRequiredXP(level) {
