@@ -18,6 +18,7 @@ const {
   logAlways,
   logToFile,
   logStartup,
+  log,
 } = require("./src/utils/logger");
 const leveling = require("./src/leveling");
 const {
@@ -38,9 +39,7 @@ const {
   groupCache,
 } = require("./config/config");
 const db = require("./database/confLowDb/lowdb");
-const { handleGroupMessage } = require("./src/handler/groupHandler");
 const crypto = require("crypto");
-const { log } = require("./src/utils/logger");
 const os = require("os");
 const { messageQueue } = require("./src/utils/messageQueue");
 const messageHandlers = require("./src/utils/messageHandlers");
@@ -522,7 +521,6 @@ const initBot = async () => {
 
             // Periksa apakah ini adalah notifikasi perubahan grup
             if (msg.messageStubType) {
-              await handleGroupNotification(effectiveSock, msg, sender, isGroup, groupId);
               return; // Hentikan pemrosesan pesan lebih lanjut untuk notifikasi
             }
 
@@ -770,11 +768,8 @@ const initBot = async () => {
                 }
               }
               
-              // Perbarui jumlah anggota dan status admin
+              // Perbarui jumlah anggota
               updateData.total_members = metadata.participants.length;
-              updateData.bot_is_admin = metadata.participants.some(
-                p => p.id === sock.user.id && (p.admin === 'admin' || p.admin === 'superadmin')
-              ) ? 1 : 0;
               
               // Periksa apakah grupnya ada atau perlu dibuat baru
               if (existingGroup) {
@@ -791,8 +786,7 @@ const initBot = async () => {
                   total_members: metadata.participants.length,
                   description: metadata.desc || null,
                   created_at: new Date().toISOString(),
-                  registration_date: new Date().toISOString(),
-                  bot_is_admin: updateData.bot_is_admin
+                  registration_date: new Date().toISOString()
                 });
                 botLogger.info(`Grup baru ditambahkan ke database: ${update.id}`);
               }
@@ -840,11 +834,6 @@ const initBot = async () => {
               try {
                 const ownerJid = metadata.owner || metadata.participants[0]?.id;
                 
-                // Cek apakah bot adalah admin
-                const isBotAdmin = metadata.participants.some(
-                  p => p.id === sock.user.id && (p.admin === 'admin' || p.admin === 'superadmin')
-                );
-                
                 existingGroup = await db.addGroup({
                   group_id: groupId,
                   group_name: metadata.subject || "Unnamed Group",
@@ -852,7 +841,6 @@ const initBot = async () => {
                   total_members: metadata.participants.length,
                   created_at: new Date().toISOString(),
                   registration_date: new Date().toISOString(),
-                  bot_is_admin: isBotAdmin ? 1 : 0,
                   welcome_message: 1, // Aktifkan welcome message secara default
                   goodbye_message: 1, // Aktifkan goodbye message secara default
                   level: 1,
@@ -957,10 +945,7 @@ const initBot = async () => {
             const groupId = isGroup ? msg.key.remoteJid : null;
             const sender = isGroup ? (msg.key.participant || msg.key.remoteJid) : msg.key.remoteJid;
             
-            // Handle notifikasi grup jika pesan dari grup dan memiliki messageStubType
-            if (isGroup && msg.messageStubType) {
-              await handleGroupNotification(sock, msg, sender, isGroup, groupId);
-            }
+            // Hapus panggilan ke handleGroupNotification
             
             // Lanjutkan ke handler normal untuk semua jenis pesan
             handlers.messagesUpsert({ messages, type });
@@ -1063,46 +1048,6 @@ const initBot = async () => {
         }
       },
     };
-
-    // Tambahkan setelah socket berhasil terhubung
-    // Sinkronisasi grup sekali setelah bot terhubung
-    let initialSync = false;
-    activeSocket.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect } = update;
-
-      if (connection === "close") {
-        // ... existing code ...
-      } else if (connection === "open") {
-        botLogger.info(
-          `${config.logs.info.socketOpen} ${config.bot.name} telah berhasil tersambung ke WhatsApp!`
-        );
-        
-        // Jalankan sinkronisasi grup saat koneksi terbuka
-        if (!initialSync) {
-          setTimeout(async () => {
-            try {
-              botLogger.info("Menjalankan sinkronisasi awal grup...");
-              await fullGroupSync(activeSocket);
-              initialSync = true;
-              botLogger.info("Sinkronisasi awal grup selesai");
-            } catch (error) {
-              botLogger.error(`Error saat sinkronisasi awal grup: ${error.message}`, error);
-            }
-          }, 5000); // Tunggu 5 detik setelah koneksi terbuka untuk sinkronisasi
-        }
-      }
-    });
-
-    // Tambahkan interval untuk sinkronisasi grup berkala - setiap 30 menit
-    setInterval(async () => {
-      try {
-        botLogger.info("Menjalankan sinkronisasi berkala grup...");
-        await fullGroupSync(activeSocket);
-        botLogger.info("Sinkronisasi berkala grup selesai");
-      } catch (error) {
-        botLogger.error(`Error saat sinkronisasi berkala grup: ${error.message}`, error);
-      }
-    }, 30 * 60 * 1000); // 30 menit
 
     return activeSocket;
   } catch (error) {
@@ -1409,40 +1354,6 @@ const commandHandler = (text) => {
     );
     logStartup(`Use "${config.prefix}botinfo" to see bot information`, "info");
     console.log("\n"); // Tambahkan baris kosong untuk kejelasan
-
-    // Setelah bot terhubung, panggil update status admin
-    setTimeout(() => {
-      if (mainBot && mainBot.user) {
-        // Jalankan update grup sekaligus untuk sinkronisasi awal
-        fullGroupSync(mainBot).then(() => {
-          botLogger.info('Sinkronisasi awal grup selesai');
-        }).catch(err => {
-          botLogger.error('Error saat sinkronisasi awal grup:', err);
-        });
-        
-        // Set interval untuk pemeriksaan berkala setiap jam
-        const adminCheckInterval = setInterval(() => {
-          if (mainBot && mainBot.user) {
-            updateBotAdminStatus(mainBot);
-          } else {
-            clearInterval(adminCheckInterval);
-          }
-        }, 60 * 60 * 1000); // Periksa setiap jam
-        
-        // Set interval untuk sinkronisasi penuh setiap 12 jam
-        const fullSyncInterval = setInterval(() => {
-          if (mainBot && mainBot.user) {
-            fullGroupSync(mainBot).then(() => {
-              botLogger.info('Sinkronisasi penuh grup selesai');
-            }).catch(err => {
-              botLogger.error('Error saat sinkronisasi penuh grup:', err);
-            });
-          } else {
-            clearInterval(fullSyncInterval);
-          }
-        }, 12 * 60 * 60 * 1000); // Setiap 12 jam
-      }
-    }, 30000); // Tunggu 30 detik setelah koneksi untuk pemeriksaan pertama
   } catch (error) {
     botLogger.error(`Failed to start bot: ${error.message}`);
     process.exit(1);
@@ -1479,376 +1390,44 @@ function initializeMessageQueue() {
   );
 }
 
-// Perbarui fungsi updateBotAdminStatus untuk menggunakan fullGroupSync
-async function updateBotAdminStatus(socket) {
+// Tambahkan fungsi handleGroupNotification yang tidak menggunakan fullGroupSync
+async function handleGroupNotification(sock, msg, sender, isGroup, groupId) {
   try {
-    if (!socket || !socket.user) {
-      botLogger.warn('Tidak dapat mengupdate status admin: Socket tidak tersedia');
-      return;
-    }
+    if (!isGroup || !msg.messageStubType) return;
     
-    botLogger.info('Memulai update status admin bot di semua grup...');
+    // Import fungsi welcome/goodbye
+    const {
+      handleGroupJoin,
+      handleGroupLeave,
+    } = require("./src/lib/welcomeNgoodbyemsg");
     
-    // Gunakan fullGroupSync untuk memastikan semua grup tersinkronisasi dengan baik
-    const syncResult = await fullGroupSync(socket);
-    
-    // Update botInfo jika bot bergabung ke grup baru
-    const botInfo = await db.getCurrentBotInfo();
-    if (syncResult.addedCount > 0 || syncResult.updatedCount > 0) {
-      const updatedGroups = await db.readDatabase().then(data => data.groups || []);
-      const adminGroups = updatedGroups.filter(g => g.bot_is_admin === 1).length;
-      
-      await db.updateBotInfo({
-        total_group: updatedGroups.length,
-        admin_group: adminGroups,
-        updated_at: new Date().toISOString()
-      });
-      
-      botLogger.info(`Info bot diperbarui: total grup=${updatedGroups.length}, grup sebagai admin=${adminGroups}`);
-    }
-    
-    return { success: true, message: 'Status admin bot berhasil diperbarui' };
-  } catch (error) {
-    botLogger.error(`Error saat mengupdate status admin bot: ${error.message}`, error);
-    return { success: false, message: error.message };
-  }
-}
-
-// Tambahkan fungsi ini bersama fungsi updateBotAdminStatus
-async function handleGroupNotification(socket, msg, sender, isGroup, groupId) {
-  if (!isGroup || !groupId) return;
-  
-  try {
-    // Cek apakah pesan adalah notifikasi grup
-    if (msg.messageStubType) {
-      const notifType = msg.messageStubType;
-      botLogger.info(`Menerima notifikasi grup ${groupId}: tipe=${notifType}`);
-      
-      // Ambil data grup saat ini
-      const dbData = await db.readDatabase();
-      const groupData = dbData.groups?.find(g => g.group_id === groupId);
-      
-      if (!groupData) {
-        botLogger.warn(`Grup ${groupId} tidak ditemukan di database, mencoba sinkronisasi`);
-        await fullGroupSync(socket);
-        return;
-      }
-      
-      // Perbarui metadata grup untuk perubahan yang umum terjadi
-      if ([
-        MessageType.GROUP_CHANGE, 
-        MessageType.GROUP_CHANGE_SUBJECT,
-        MessageType.GROUP_CHANGE_ICON,
-        MessageType.GROUP_CHANGE_INVITE_LINK,
-        MessageType.GROUP_CHANGE_DESCRIPTION,
-        MessageType.GROUP_PARTICIPANT_ADD,
-        MessageType.GROUP_PARTICIPANT_REMOVE,
-        MessageType.GROUP_PARTICIPANT_PROMOTE,
-        MessageType.GROUP_PARTICIPANT_DEMOTE
-      ].includes(notifType)) {
-        botLogger.info(`Perubahan grup terdeteksi di ${groupId}, memperbarui metadata...`);
-        
+    // Cek tipe notifikasi
+    switch (msg.messageStubType) {
+      case 27: // GROUP_PARTICIPANT_LEAVE
         try {
-          // Ambil metadata grup terbaru
-          const metadata = await socket.groupMetadata(groupId);
-          
-          // Siapkan data yang akan diperbarui
-          const updateData = {
-            updated_at: new Date().toISOString()
-          };
-          
-          // Update nama grup jika berubah
-          if (metadata.subject && metadata.subject !== groupData.group_name) {
-            updateData.group_name = metadata.subject;
-            botLogger.info(`Nama grup berubah: ${groupData.group_name} -> ${metadata.subject}`);
-          }
-          
-          // Update jumlah anggota
-          updateData.total_members = metadata.participants.length;
-          
-          // Update deskripsi jika berubah
-          if (metadata.desc && metadata.desc !== groupData.description) {
-            updateData.description = metadata.desc;
-            botLogger.info(`Deskripsi grup diperbarui`);
-          }
-          
-          // Update status admin bot
-          const botId = socket.user.id;
-          const isBotAdmin = metadata.participants.some(
-            p => p.id === botId && (p.admin === 'admin' || p.admin === 'superadmin')
-          );
-          
-          if (groupData.bot_is_admin !== (isBotAdmin ? 1 : 0)) {
-            updateData.bot_is_admin = isBotAdmin ? 1 : 0;
-            botLogger.info(`Status admin bot berubah: ${groupData.bot_is_admin} -> ${isBotAdmin ? 1 : 0}`);
-          }
-          
-          // Update owner jika berubah
-          if (metadata.owner && metadata.owner !== groupData.owner_id) {
-            updateData.owner_id = metadata.owner;
-            botLogger.info(`Owner grup berubah: ${groupData.owner_id} -> ${metadata.owner}`);
-          }
-          
-          // Pastikan welcome_message dan goodbye_message ada
-          if (groupData.welcome_message === undefined) {
-            updateData.welcome_message = 1; // Aktifkan welcome message secara default
-            botLogger.info(`Setting welcome_message=1 untuk grup ${groupId} karena tidak ada dalam database`);
-          }
-          
-          if (groupData.goodbye_message === undefined) {
-            updateData.goodbye_message = 1; // Aktifkan goodbye message secara default
-            botLogger.info(`Setting goodbye_message=1 untuk grup ${groupId} karena tidak ada dalam database`);
-          }
-          
-          // Perbarui data grup
-          const result = await db.updateGroup(groupId, updateData);
-          if (result.success) {
-            botLogger.info(`Grup ${groupId} berhasil diperbarui setelah perubahan`);
-            // Perbarui cache
-            groupCache.set(groupId, metadata);
-          } else {
-            botLogger.error(`Gagal memperbarui grup ${groupId} setelah perubahan: ${result.message}`);
-          }
-          
-          // Jika bot menjadi admin atau bukan admin lagi, update botInfo
-          if (groupData.bot_is_admin !== (isBotAdmin ? 1 : 0)) {
-            const allGroups = dbData.groups || [];
-            const adminGroups = allGroups.filter(g => g.bot_is_admin === 1).length + (isBotAdmin ? 1 : -1);
-            
-            await db.updateBotInfo({
-              admin_group: adminGroups,
-              updated_at: new Date().toISOString()
-            });
-            
-            botLogger.info(`Info bot diperbarui: grup sebagai admin=${adminGroups}`);
-          }
-          
-          // Handle welcome and goodbye messages
-          const { handleGroupJoin, handleGroupLeave } = require('./src/lib/welcomeNgoodbyemsg');
-          
-          // Tangani join/add
-          if (notifType === MessageType.GROUP_PARTICIPANT_ADD && groupData.welcome_message === 1) {
-            botLogger.info(`Menangani pesan welcome untuk anggota baru di grup ${groupId}`);
-            try {
-              // Panggil handleGroupJoin untuk menangani welcome message
-              await handleGroupJoin(socket, msg);
-            } catch (err) {
-              botLogger.error(`Error saat menangani welcome message: ${err.message}`, err);
-            }
-          }
-          
-          // Tangani leave/remove
-          if (notifType === MessageType.GROUP_PARTICIPANT_REMOVE && groupData.goodbye_message === 1) {
-            botLogger.info(`Menangani pesan goodbye untuk anggota yang keluar dari grup ${groupId}`);
-            try {
-              // Panggil handleGroupLeave untuk menangani goodbye message
-              await handleGroupLeave(socket, msg);
-            } catch (err) {
-              botLogger.error(`Error saat menangani goodbye message: ${err.message}`, err);
-            }
+          const existingGroup = await db.getGroup(groupId);
+          if (existingGroup && existingGroup.goodbye_message === 1) {
+            await handleGroupLeave(sock, msg);
           }
         } catch (error) {
-          botLogger.error(`Error memperbarui metadata grup ${groupId}: ${error.message}`, error);
+          botLogger.error(`Error handling group leave: ${error.message}`, error);
         }
-      }
-    }
-  } catch (error) {
-    botLogger.error(`Error menangani notifikasi grup ${groupId}: ${error.message}`, error);
-  }
-}
-
-// Tambahkan fungsi ini bersama fungsi updateBotAdminStatus
-async function fullGroupSync(socket) {
-  try {
-    if (!socket || !socket.user) {
-      botLogger.warn('Tidak dapat melakukan sinkronisasi grup: Socket tidak tersedia');
-      return;
-    }
-    
-    botLogger.info('Memulai sinkronisasi penuh grup...');
-    
-    // 1. Ambil semua grup di mana bot adalah anggota
-    const participatingGroups = await socket.groupFetchAllParticipating();
-    if (!participatingGroups || Object.keys(participatingGroups).length === 0) {
-      botLogger.info('Tidak ada grup yang diikuti oleh bot');
-      return;
-    }
-    
-    // 2. Ambil data dari database
-    const dbData = await db.readDatabase();
-    let groupsInDb = dbData.groups || [];
-    if (!Array.isArray(groupsInDb)) groupsInDb = [];
-    
-    botLogger.info(`Bot mengikuti ${Object.keys(participatingGroups).length} grup, ${groupsInDb.length} grup di database`);
-    
-    // 3. Sinkronisasi setiap grup yang ada di WhatsApp API
-    let addedCount = 0;
-    let updatedCount = 0;
-    const botId = socket.user.id;
-    
-    botLogger.info(`ID Bot untuk pengecekan admin: ${botId}`);
-    
-    for (const [groupId, metadata] of Object.entries(participatingGroups)) {
-      try {
-        // Debug informasi admin
-        const admins = metadata.participants
-          .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-          .map(p => ({ id: p.id, admin: p.admin }));
+        break;
         
-        botLogger.info(`Grup ${groupId} (${metadata.subject}) memiliki ${admins.length} admin: ${JSON.stringify(admins)}`);
-        
-        // Cari grup di database
-        let existingGroup = groupsInDb.find(g => g.group_id === groupId);
-        
-        // Identifikasi apakah bot adalah admin dengan logging lebih detail
-        let isBotAdmin = false;
-        for (const participant of metadata.participants) {
-          if (participant.id === botId && (participant.admin === 'admin' || participant.admin === 'superadmin')) {
-            isBotAdmin = true;
-            botLogger.info(`Bot terdeteksi sebagai admin di grup ${groupId} - ID: ${participant.id}, Role: ${participant.admin}`);
-            break;
-          }
-        }
-        
-        if (!isBotAdmin) {
-          botLogger.info(`Bot BUKAN admin di grup ${groupId} - ID Bot: ${botId}`);
-        }
-        
-        // Identifikasi owner
-        const ownerJid = metadata.owner || 
-                         metadata.participants.find(p => p.admin === 'superadmin')?.id || 
-                         metadata.participants[0]?.id;
-        
-        // Jika grup tidak ada di database, tambahkan
-        if (!existingGroup) {
-          botLogger.info(`Menambahkan grup baru: ${metadata.subject} (${groupId}), bot admin: ${isBotAdmin}`);
-          
-          const result = await db.addGroup({
-            group_id: groupId,
-            group_name: metadata.subject || "Unnamed Group",
-            owner_id: ownerJid,
-            total_members: metadata.participants.length,
-            description: metadata.desc || null,
-            created_at: new Date().toISOString(),
-            registration_date: new Date().toISOString(),
-            bot_is_admin: isBotAdmin ? 1 : 0,
-            welcome_message: 1, // Aktifkan welcome message secara default
-            goodbye_message: 1, // Aktifkan goodbye message secara default
-            level: 1,
-            total_xp: 0,
-            current_xp: 0,
-            xp_to_next_level: 1000
-          });
-          
-          if (result.success) {
-            botLogger.info(`Grup baru ditambahkan: ${metadata.subject} (${groupId})`);
-            addedCount++;
-          } else {
-            botLogger.error(`Gagal menambahkan grup: ${result.message}`);
-          }
-        } 
-        // Jika grup sudah ada, perbarui data
-        else {
-          // Siapkan data yang akan diperbarui
-          const updateData = {
-            group_name: metadata.subject,
-            total_members: metadata.participants.length,
-            bot_is_admin: isBotAdmin ? 1 : 0,
-            updated_at: new Date().toISOString()
-          };
-          
-          // Perbaharui status admin
-          if (existingGroup.bot_is_admin !== (isBotAdmin ? 1 : 0)) {
-            botLogger.info(`Memperbarui status admin bot untuk grup ${groupId}: ${existingGroup.bot_is_admin} -> ${isBotAdmin ? 1 : 0}`);
-          }
-          
-          // Tambahkan deskripsi jika ada
-          if (metadata.desc) {
-            updateData.description = metadata.desc;
-          }
-          
-          // Tambahkan owner jika ada
-          if (ownerJid) {
-            updateData.owner_id = ownerJid;
-          }
-          
-          // Pastikan welcome_message dan goodbye_message ada dan valid
-          if (existingGroup.welcome_message === undefined) {
-            updateData.welcome_message = 1; // Aktifkan welcome message secara default
-            botLogger.info(`Setting welcome_message=1 untuk grup ${groupId} karena tidak ada dalam database`);
-          }
-          
-          if (existingGroup.goodbye_message === undefined) {
-            updateData.goodbye_message = 1; // Aktifkan goodbye message secara default 
-            botLogger.info(`Setting goodbye_message=1 untuk grup ${groupId} karena tidak ada dalam database`);
-          }
-          
-          // Perbarui data grup
-          const result = await db.updateGroup(groupId, updateData);
-          if (result.success) {
-            updatedCount++;
-            botLogger.info(`Grup ${groupId} diperbarui dengan data: ${JSON.stringify(updateData)}`);
-          } else {
-            botLogger.error(`Gagal memperbarui grup ${groupId}: ${result.message}`);
-          }
-        }
-        
-        // Perbarui cache
-        groupCache.set(groupId, metadata);
-        
-      } catch (error) {
-        botLogger.error(`Error saat sinkronisasi grup ${groupId}: ${error.message}`, error);
-      }
-    }
-    
-    // 4. Cek apakah ada grup di database yang sudah tidak diikuti oleh bot
-    const notExistingGroups = groupsInDb.filter(dbGroup => 
-      !Object.keys(participatingGroups).includes(dbGroup.group_id)
-    );
-    
-    botLogger.info(`Ditemukan ${notExistingGroups.length} grup di database yang mungkin sudah tidak diikuti bot`);
-    
-    // Verifikasi grup-grup tersebut
-    let removedCount = 0;
-    for (const group of notExistingGroups) {
-      try {
-        // Coba ambil metadata untuk memverifikasi keberadaan grup
+      case 28: // GROUP_PARTICIPANT_ADD
         try {
-          await promiseWithTimeout(socket.groupMetadata(group.group_id), 5000);
-          // Grup masih ada dan bot masih anggota, jangan lakukan apa-apa
+          const existingGroup = await db.getGroup(groupId);
+          if (existingGroup && existingGroup.welcome_message === 1) {
+            await handleGroupJoin(sock, msg);
+          }
         } catch (error) {
-          // Grup tidak ada atau bot bukan anggota, update status
-          botLogger.info(`Bot tidak lagi menjadi anggota grup ${group.group_id}`);
-          // Opsional: tandai grup sebagai tidak aktif atau hapus dari database
-          // await db.updateGroup(group.group_id, { is_active: 0 });
-          removedCount++;
+          botLogger.error(`Error handling group join: ${error.message}`, error);
         }
-      } catch (error) {
-        botLogger.error(`Error memeriksa grup tidak aktif ${group.group_id}: ${error.message}`);
-      }
+        break;
+        
+      // Tambahkan case lain jika diperlukan
     }
-    
-    botLogger.info(`Sinkronisasi selesai: ${addedCount} grup ditambahkan, ${updatedCount} grup diperbarui, ${removedCount} grup tidak aktif`);
-    return { addedCount, updatedCount, removedCount };
-    
   } catch (error) {
-    botLogger.error(`Error saat melakukan sinkronisasi penuh grup: ${error.message}`, error);
-    throw error;
+    botLogger.error(`Error in handleGroupNotification: ${error.message}`, error);
   }
-}
-
-function makeHandleGroupMessage(sock) {
-  return async (msg, sender, isGroup, groupId) => {
-    try {
-      // Handle notifikasi grup
-      if (msg.messageStubType) {
-        await handleGroupNotification(sock, msg, sender, isGroup, groupId);
-      }
-      
-      // Sisanya adalah proses pesan normal
-      // ... existing code ...
-    } catch (error) {
-      botLogger.error(`Error saat menangani pesan grup: ${error.message}`, error);
-    }
-  };
 }
