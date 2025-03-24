@@ -1,184 +1,96 @@
-const { Character, BattleSystem, Inventory, QuestJournal } = require('../lib/rpg');
+const { Character, BattleSystem, Inventory, QuestJournal, World } = require('../lib/rpg');
 const { botLogger } = require('../utils/logger');
 const langId = require('../i18n/langId.json');
-const { World } = require("../lib/rpg/world");
+const db = require('../lib/rpg/database');
 
-// Simpan data game dalam memory
-if (!global.rpgData) {
-  global.rpgData = {
-    players: new Map(),
-    activeBattles: new Map(),
-    world: new World()
-  };
-}
-
-// Command untuk membuat karakter baru
+// Command untuk memulai game RPG
 Oblixn.cmd({
-  name: "createchar",
-  alias: ["newchar", "createcharacter"],
-  desc: langId.commands.rpg.createchar,
-  category: "rpg",
-  async exec(msg, { args }) {
+  name: "rpg",
+  desc: "Memulai game RPG",
+  category: "games",
+  async exec(msg, args) {
     try {
       const userId = msg.sender;
       
-      // Cek apakah sudah punya karakter
-      if (global.rpgData.players.has(userId)) {
-        return msg.reply(langId.errors.rpg.no_character);
+      // Cek apakah pemain sudah memiliki karakter
+      const existingCharacter = await db.loadCharacter(userId);
+      if (existingCharacter) {
+        return msg.reply(langId.commands.rpg.alreadyHaveCharacter);
       }
-
-      // Validasi input
-      if (!args[0] || !args[1]) {
-        return msg.reply(langId.commands.rpg.createchar);
-      }
-
-      const [name, className] = [args[0], args[1].toLowerCase()];
-      const validClasses = ['warrior', 'mage', 'assassin', 'archer'];
-
-      if (!validClasses.includes(className)) {
-        return msg.reply(langId.errors.rpg.invalid_class);
-      }
-
+      
       // Buat karakter baru
-      const character = new Character(name, className.charAt(0).toUpperCase() + className.slice(1));
-      global.rpgData.players.set(userId, character);
-
-      return msg.reply(langId.guides.rpg.character_created
-        .replace('${name}', character.name)
-        .replace('${className}', character.className)
-        .replace('${hp}', character.maxHp)
-        .replace('${mp}', character.maxMp)
-        .replace('${stamina}', character.maxStamina)
-      );
-
+      const character = new Character(args[0] || "Hero", args[1] || "Warrior");
+      await db.saveCharacter(userId, character);
+      
+      return msg.reply(langId.commands.rpg.characterCreated);
     } catch (error) {
-      botLogger.error("Error in createchar command:", error);
-      return msg.reply(langId.errors.generic);
+      botLogger.error("Error in rpg command:", error);
+      return msg.reply(langId.errors.rpg.creationFailed);
     }
   }
 });
 
 // Command untuk melihat profil karakter
 Oblixn.cmd({
-  name: "profile", 
-  alias: ["mychar", "status"],
-  desc: langId.commands.rpg.profile,
-  category: "rpg",
+  name: "profile",
+  desc: "Melihat profil karakter",
+  category: "games",
   async exec(msg) {
     try {
       const userId = msg.sender;
-      const char = global.rpgData.players.get(userId);
-
-      if (!char) {
-        return msg.reply(langId.errors.rpg.no_character);
+      
+      // Cek apakah pemain memiliki karakter
+      const characterData = await db.loadCharacter(userId);
+      if (!characterData) {
+        return msg.reply(langId.errors.rpg.noCharacter);
       }
-
-      return msg.reply(langId.info.rpg.profile
-        .replace('${name}', char.name)
-        .replace('${className}', char.className)
-        .replace('${level}', char.level)
-        .replace('${gold}', char.gold)
-        .replace('${hp}', char.hp)
-        .replace('${maxHp}', char.maxHp)
-        .replace('${mp}', char.mp)
-        .replace('${maxMp}', char.maxMp)
-        .replace('${stamina}', char.stamina)
-        .replace('${maxStamina}', char.maxStamina)
-      );
-
+      
+      return msg.reply(langId.info.rpg.profile(characterData));
     } catch (error) {
       botLogger.error("Error in profile command:", error);
-      return msg.reply(langId.errors.generic);
+      return msg.reply(langId.errors.rpg.profileError);
     }
   }
 });
 
-// Command untuk battle
+// Command untuk memulai pertarungan
 Oblixn.cmd({
   name: "battle",
-  alias: ["fight", "duel"],
-  desc: langId.commands.rpg.battle,
-  category: "rpg",
-  async exec(msg, { args }) {
-    try {
-      const userId = msg.sender;
-      const char = global.rpgData.players.get(userId);
-
-      if (!char) {
-        return msg.reply(langId.errors.rpg.no_character);
-      }
-
-      // Cek apakah sedang dalam battle
-      if (global.rpgData.activeBattles.has(userId)) {
-        return msg.reply(langId.errors.rpg.in_battle);
-      }
-
-      // Generate musuh random sesuai level
-      const enemy = new Character("Monster", "Warrior");
-      enemy.level = Math.max(1, char.level - 1 + Math.floor(Math.random() * 3));
-      
-      // Mulai battle
-      const battle = new BattleSystem([char], [enemy]);
-      global.rpgData.activeBattles.set(userId, battle);
-
-      return msg.reply(langId.guides.rpg.battle_start
-        .replace('${enemyName}', enemy.name)
-        .replace('${level}', enemy.level)
-        .replace('${hp}', enemy.hp)
-        .replace('${maxHp}', enemy.maxHp)
-        .replace('${attack}', enemy.attack)
-        .replace('${defense}', enemy.defense)
-      );
-
-    } catch (error) {
-      botLogger.error("Error in battle command:", error);
-      return msg.reply(langId.errors.generic);
-    }
-  }
-});
-
-// Command untuk menyerang dalam battle
-Oblixn.cmd({
-  name: "attack",
-  desc: langId.commands.rpg.battle,
-  category: "rpg",
+  desc: "Memulai pertarungan",
+  category: "games",
   async exec(msg) {
     try {
       const userId = msg.sender;
-      const battle = global.rpgData.activeBattles.get(userId);
-
-      if (!battle) {
-        return msg.reply(langId.errors.rpg.in_battle);
-      }
-
-      const result = battle.executeTurn({type: 'attack'});
       
-      // Cek apakah battle selesai
-      if (battle.checkBattleEnd()) {
-        global.rpgData.activeBattles.delete(userId);
-        const char = global.rpgData.players.get(userId);
-        
-        // Berikan reward jika menang
-        if (char.hp > 0) {
-          const expGain = Math.floor(Math.random() * 50) + 50;
-          const goldGain = Math.floor(Math.random() * 100) + 100;
-          char.exp += expGain;
-          char.gold += goldGain;
-          
-          return msg.reply(langId.guides.rpg.victory
-            .replace('${exp}', expGain)
-            .replace('${gold}', goldGain)
-          );
-        } else {
-          return msg.reply(langId.guides.rpg.defeat);
-        }
+      // Cek apakah pemain memiliki karakter
+      const characterData = await db.loadCharacter(userId);
+      if (!characterData) {
+        return msg.reply(langId.errors.rpg.noCharacter);
       }
-
-      return msg.reply(result);
-
+      
+      // Cek apakah pemain sedang dalam pertarungan
+      const battleData = await db.loadBattle(userId);
+      if (battleData) {
+        return msg.reply(langId.errors.rpg.inBattle);
+      }
+      
+      // Dapatkan lokasi saat ini
+      const worldData = await db.loadWorld();
+      if (!worldData || !worldData.currentLocation || worldData.currentLocation.type === 'safe') {
+        return msg.reply(langId.errors.rpg.noEnemies);
+      }
+      
+      // Buat pertarungan baru
+      const character = new Character(characterData.name, characterData.className);
+      Object.assign(character, characterData);
+      
+      const battle = new BattleSystem([character], worldData.currentLocation.enemies);
+      await db.saveBattle(userId, battle);
+      
+      return msg.reply(langId.commands.rpg.battleStarted);
     } catch (error) {
-      botLogger.error("Error in attack command:", error);
-      return msg.reply(langId.errors.generic);
+      botLogger.error("Error in battle command:", error);
+      return msg.reply(langId.errors.rpg.battleError);
     }
   }
 });
@@ -186,71 +98,95 @@ Oblixn.cmd({
 // Command untuk menggunakan skill
 Oblixn.cmd({
   name: "skill",
-  desc: langId.commands.rpg.skill,
-  category: "rpg",
-  async exec(msg, { args }) {
+  desc: "Menggunakan skill",
+  category: "games",
+  async exec(msg, args) {
     try {
       const userId = msg.sender;
-      const battle = global.rpgData.activeBattles.get(userId);
-      const char = global.rpgData.players.get(userId);
-
-      if (!battle) {
-        return msg.reply(langId.errors.rpg.in_battle);
+      
+      // Cek apakah pemain memiliki karakter
+      const characterData = await db.loadCharacter(userId);
+      if (!characterData) {
+        return msg.reply(langId.errors.rpg.noCharacter);
       }
-
-      if (!args[0]) {
-        return msg.reply(`*${langId.commands.rpg.skill}:*\n${char.skills.join('\n')}`);
+      
+      // Cek apakah pemain sedang dalam pertarungan
+      const battleData = await db.loadBattle(userId);
+      if (!battleData) {
+        return msg.reply(langId.errors.rpg.notInBattle);
       }
-
-      const skillName = args.join(" ");
-      const result = char.useSkill(skillName, battle.enemies[0]);
-
+      
+      // Gunakan skill
+      const character = new Character(characterData.name, characterData.className);
+      Object.assign(character, characterData);
+      
+      const battle = new BattleSystem([character], battleData.enemies);
+      Object.assign(battle, battleData);
+      
+      const result = battle.executeTurn({
+        type: 'skill',
+        skillName: args[0]
+      });
+      
+      // Simpan perubahan battle
+      await db.saveBattle(userId, battle);
+      
       return msg.reply(result);
-
     } catch (error) {
       botLogger.error("Error in skill command:", error);
-      return msg.reply(langId.errors.rpg.skill_fail);
+      return msg.reply(langId.errors.rpg.skillError);
     }
   }
 });
 
-// Command untuk inventory
+// Command untuk melihat inventory
 Oblixn.cmd({
   name: "inventory",
-  alias: ["inv"],
-  desc: langId.commands.rpg.inventory,
-  category: "rpg",
+  desc: "Melihat inventory",
+  category: "games",
   async exec(msg) {
     try {
       const userId = msg.sender;
-      const char = global.rpgData.players.get(userId);
-
-      if (!char) {
-        return msg.reply(langId.errors.rpg.no_character);
-      }
-
-      const inv = char.inventory;
-      let itemList = '';
       
-      inv.items.forEach(item => {
-        itemList += `• ${item.name} (${item.type})\n`;
-      });
-
-      return msg.reply(langId.info.rpg.inventory
-        .replace('${weight}', inv.currentWeight)
-        .replace('${maxWeight}', inv.maxWeight)
-        .replace('${items}', itemList || 'Kosong')
-        .replace('${weapon}', char.equipment.weapon?.name || 'None')
-        .replace('${armor}', char.equipment.armor?.name || 'None')
-        .replace('${accessory}', char.equipment.accessory?.name || 'None')
-      );
-
+      // Cek apakah pemain memiliki karakter
+      const characterData = await db.loadCharacter(userId);
+      if (!characterData) {
+        return msg.reply(langId.errors.rpg.noCharacter);
+      }
+      
+      return msg.reply(langId.info.rpg.inventory(characterData.inventory));
     } catch (error) {
       botLogger.error("Error in inventory command:", error);
-      return msg.reply(langId.errors.generic);
+      return msg.reply(langId.errors.rpg.inventoryError);
     }
   }
 });
 
-// Ekspor class World
-module.exports = { World }; 
+// Command untuk menghapus karakter
+Oblixn.cmd({
+  name: "delete_character",
+  desc: "Menghapus karakter",
+  category: "games",
+  async exec(msg) {
+    try {
+      const userId = msg.sender;
+      
+      // Cek apakah pemain memiliki karakter
+      const characterData = await db.loadCharacter(userId);
+      if (!characterData) {
+        return msg.reply(langId.errors.rpg.noCharacter);
+      }
+      
+      // Hapus karakter dan battle data
+      await db.deleteCharacter(userId);
+      await db.deleteBattle(userId);
+      
+      return msg.reply(langId.commands.rpg.characterDeleted);
+    } catch (error) {
+      botLogger.error("Error in delete_character command:", error);
+      return msg.reply(langId.errors.rpg.deletionError);
+    }
+  }
+});
+
+module.exports = {}; 

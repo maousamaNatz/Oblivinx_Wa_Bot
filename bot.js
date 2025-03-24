@@ -21,7 +21,7 @@ const {
   log,
 } = require("./src/utils/logger");
 const leveling = require("./src/leveling");
-const {
+const {                                   
   config,
   store,
   msgRetryCounterCache,
@@ -397,6 +397,34 @@ global.otpHandlers = {};
 let reconnectAttempts = 0;
 let socketInstance = null;
 
+const rateLimiter = new Map();
+const RATE_LIMIT_DELAY = 1000; // 1 detik delay
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withRateLimit(key, operation) {
+  const now = Date.now();
+  const lastOperation = rateLimiter.get(key) || 0;
+  
+  if (now - lastOperation < RATE_LIMIT_DELAY) {
+    await delay(RATE_LIMIT_DELAY - (now - lastOperation));
+  }
+  
+  try {
+    const result = await operation();
+    rateLimiter.set(key, Date.now());
+    return result;
+  } catch (error) {
+    if (error.message.includes('rate-overlimit')) {
+      await delay(RATE_LIMIT_DELAY * 2);
+      return withRateLimit(key, operation);
+    }
+    throw error;
+  }
+}
+
 const initBot = async () => {
   if (activeSocket && activeSocket.user) {
     botLogger.info("Session utama sudah login, melewati inisialisasi ulang.");
@@ -542,9 +570,8 @@ const initBot = async () => {
               let groupData = await db.getGroup(groupId);
               if (!groupData) {
                 try {
-                  groupMetadata = await promiseWithTimeout(
-                    effectiveSock.groupMetadata(groupId),
-                    5000 // Timeout 5 detik
+                  groupMetadata = await withRateLimit(`groupMetadata-${groupId}`, () =>
+                    effectiveSock.groupMetadata(groupId)
                   );
                   const newGroup = await db.addGroup({
                     group_id: groupId,
@@ -587,9 +614,8 @@ const initBot = async () => {
               }
               if (!groupInfo) {
                 try {
-                  groupInfo = await promiseWithTimeout(
-                    getGroupAdminInfo(effectiveSock, sender),
-                    5000
+                  groupInfo = await withRateLimit(`groupInfo-${sender}`, () =>
+                    getGroupAdminInfo(effectiveSock, sender)
                   );
                   groupCache.set(sender, groupInfo);
                 } catch (error) {
@@ -608,9 +634,8 @@ const initBot = async () => {
                 groupMetadata = groupInfo;
               } else if (!groupMetadata) {
                 try {
-                  groupMetadata = await promiseWithTimeout(
-                    effectiveSock.groupMetadata(groupId),
-                    5000
+                  groupMetadata = await withRateLimit(`groupMetadata-${groupId}`, () =>
+                    effectiveSock.groupMetadata(groupId)
                   );
                 } catch (error) {
                   botLogger.warn(
@@ -730,9 +755,8 @@ const initBot = async () => {
           for (const update of updates) {
             try {
               // Ambil metadata grup terbaru
-              const metadata = await promiseWithTimeout(
-                sock.groupMetadata(update.id),
-                5000
+              const metadata = await withRateLimit(`groupMetadata-${update.id}`, () => 
+                sock.groupMetadata(update.id)
               );
               
               // Perbarui cache
@@ -811,9 +835,8 @@ const initBot = async () => {
 
           try {
             // Update cache metadata grup
-            const metadata = await promiseWithTimeout(
-              sock.groupMetadata(event.id),
-              5000
+            const metadata = await withRateLimit(`groupMetadata-${event.id}`, () =>
+              sock.groupMetadata(event.id)
             );
             groupCache.set(event.id, metadata);
 
@@ -913,9 +936,8 @@ const initBot = async () => {
               }
             } else if (action === "promote" || action === "demote") {
               // Update status admin di cache jika perlu
-              const updatedMetadata = await promiseWithTimeout(
-                sock.groupMetadata(event.id),
-                5000
+              const updatedMetadata = await withRateLimit(`groupMetadata-${event.id}`, () =>
+                sock.groupMetadata(event.id)
               );
               groupCache.set(event.id, updatedMetadata);
               

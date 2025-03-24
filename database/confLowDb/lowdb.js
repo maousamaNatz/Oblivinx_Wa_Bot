@@ -181,39 +181,39 @@ const banUserSchema = {
 const groupSchema = {
   type: "object",
   properties: {
-    id: { type: "integer", minimum: 1 },
-    group_id: { type: "string", minLength: 1 },
-    group_name: { type: ["string", "null"] },
-    owner_id: { type: "string", minLength: 1 },
-    total_members: { type: "integer", minimum: 0, default: 0 },
-    created_at: { type: "string", format: "date-time" },
-    registration_date: { type: "string", format: "date-time" },
-    premium_status: { type: "integer", enum: [0, 1], default: 0 },
-    sewa_status: { type: "integer", enum: [0, 1], default: 0 },
-    language: { type: "string", minLength: 1, default: "id" },
-    leaderboard_rank: { type: ["integer", "null"], minimum: 1 },
-    level: { type: "integer", minimum: 1, default: 1 },
-    total_xp: { type: "integer", minimum: 0, default: 0 },
-    current_xp: { type: "integer", minimum: 0, default: 0 },
-    xp_to_next_level: { type: "integer", minimum: 0, default: 1000 },
-    anti_bot: { type: "integer", enum: [0, 1], default: 0 },
-    anti_delete_message: { type: "integer", enum: [0, 1], default: 0 },
-    anti_hidden_tag: { type: "integer", enum: [0, 1], default: 0 },
-    anti_group_link: { type: "integer", enum: [0, 1], default: 0 },
-    anti_view_once: { type: "integer", enum: [0, 1], default: 0 },
-    auto_sticker: { type: "integer", enum: [0, 1], default: 0 },
-    log_detection: { type: "integer", enum: [0, 1], default: 0 },
-    auto_level_up: { type: "integer", enum: [0, 1], default: 0 },
-    mute_bot: { type: "integer", enum: [0, 1], default: 0 },
-    anti_country: { type: "integer", enum: [0, 1], default: 0 },
-    welcome_message: { type: "integer", enum: [0, 1], default: 0 },
-    goodbye_message: { type: "integer", enum: [0, 1], default: 0 },
-    warnings: { type: "integer", minimum: 0, default: 0 },
-    updated_at: { type: "string", format: "date-time" },
+    id: { type: "string" },
+    group_id: { type: "string" },
+    owner_id: { type: "string" },
+    group_name: { type: "string" },
+    total_members: { type: "number" },
+    welcome_message: { type: "number", enum: [0, 1] },
+    goodbye_message: { type: "number", enum: [0, 1] },
+    level: { type: "number" },
+    total_xp: { type: "number" },
+    current_xp: { type: "number" },
+    xp_to_next_level: { type: "number" },
+    created_at: { type: "string" },
+    updated_at: { type: "string" },
+    registration_date: { type: "string" },
     description: { type: ["string", "null"] },
+    warnings: { type: "number" },
+    topUsers: { 
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          userId: { type: "string" },
+          level: { type: "number" },
+          xp: { type: "number" },
+          username: { type: "string" },
+          messages: { type: "number" },
+          lastUpdated: { type: "string" }
+        }
+      }
+    }
   },
-  required: ["id", "group_id", "owner_id"],
-  additionalProperties: false,
+  required: ["group_id", "owner_id", "group_name"],
+  additionalProperties: false
 };
 
 // Skema untuk order
@@ -340,11 +340,21 @@ async function updateGroup(groupId, groupData) {
       return result;
     }
     
-    const updatedGroup = { ...data.groups[groupIndex], ...groupData };
-    updatedGroup.group_id = updatedGroup.group_id || groupId;
-    updatedGroup.owner_id = updatedGroup.owner_id || data.groups[groupIndex].owner_id;
-    updatedGroup.id = data.groups[groupIndex].id;
-    updatedGroup.updated_at = new Date().toISOString();
+    // Hapus properti yang tidak diizinkan
+    const allowedProperties = Object.keys(groupSchema.properties);
+    const filteredData = Object.keys(groupData)
+      .filter(key => allowedProperties.includes(key))
+      .reduce((obj, key) => {
+        obj[key] = groupData[key];
+        return obj;
+      }, {});
+    
+    const updatedGroup = { 
+      ...data.groups[groupIndex], 
+      ...filteredData,
+      group_id: groupId,
+      updated_at: new Date().toISOString()
+    };
     
     if (!validateGroup(updatedGroup)) {
       log(`Invalid updated group data: ${ajv.errorsText(validateGroup.errors)}`, 'error');

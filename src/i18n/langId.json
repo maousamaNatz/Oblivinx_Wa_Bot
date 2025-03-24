@@ -28,7 +28,11 @@
       "fileUpload": "File ${filename} berhasil diunggah",
       "dataSync": "Sinkronisasi data selesai",
       "backup": "Backup sistem berhasil dibuat",
-      "update": "Sistem berhasil diperbarui ke versi ${version}"
+      "update": "Sistem berhasil diperbarui ke versi ${version}",
+      "rpg": {
+        "profile": "📋 *Profil Karakter*\n\nNama: ${name}\nKelas: ${className}\nLevel: ${level}\nGold: ${gold}\nHP: ${hp}/${maxHp}\nMP: ${mp}/${maxMp}\nStamina: ${stamina}/${maxStamina}",
+        "inventory": "🎒 *Inventory*\n\nBerat: ${weight}/${maxWeight}\n\n*Items:*\n${items}\n\n*Equipment:*\nWeapon: ${weapon}\nArmor: ${armor}\nAccessory: ${accessory}"
+      }
     },
     "debug": {
       "title": "Debug",
@@ -85,5 +89,30 @@
     "contribute": "you can also contribute to the development of this bot by forking our repository on github and submitting a pull request.",
     "thankyou": "thank you for using oblivinx bot, hope it helps! 🚀",
     "contact": "=========================== Contact Developer ============================"
+  },
+  "commands": {
+    "rpg": {
+      "createchar": "Buat karakter baru dengan format: !createchar <nama> <kelas>\nKelas yang tersedia: warrior, mage, assassin, archer",
+      "profile": "Menampilkan profil karakter",
+      "battle": "Memulai pertarungan dengan monster",
+      "skill": "Menggunakan skill dalam pertarungan",
+      "inventory": "Menampilkan inventory karakter"
+    }
+  },
+  "errors": {
+    "rpg": {
+      "no_character": "Kamu belum memiliki karakter! Gunakan !createchar untuk membuat karakter baru.",
+      "invalid_class": "Kelas tidak valid! Kelas yang tersedia: warrior, mage, assassin, archer",
+      "in_battle": "Kamu sedang dalam pertarungan! Gunakan !attack untuk menyerang.",
+      "skill_fail": "Gagal menggunakan skill! Pastikan MP cukup dan skill tersedia."
+    }
+  },
+  "guides": {
+    "rpg": {
+      "character_created": "Karakter berhasil dibuat!\nNama: ${name}\nKelas: ${className}\nHP: ${hp}\nMP: ${mp}\nStamina: ${stamina}",
+      "battle_start": "Pertarungan dimulai!\nMusuh: ${enemyName} (Level ${level})\nHP: ${hp}/${maxHp}\nAttack: ${attack}\nDefense: ${defense}",
+      "victory": "Kamu menang!\nMendapatkan ${exp} EXP dan ${gold} Gold!",
+      "defeat": "Kamu kalah dalam pertarungan!"
+    }
   }
 }

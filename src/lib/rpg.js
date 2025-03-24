@@ -10,6 +10,149 @@ Struktur yang ditingkatkan:
 6. NPC dan shop system yang dinamis
 */
 
+// ==================== SISTEM SKILL TREE ====================
+class SkillTree {
+  constructor() {
+    this.skills = new Map();
+    this.unlockedSkills = new Set();
+    this.setupSkillTree();
+  }
+
+  setupSkillTree() {
+    // Warrior Skills
+    this.skills.set('Power Strike', {
+      name: 'Power Strike',
+      level: 1,
+      mpCost: 20,
+      damage: 50,
+      description: 'Serangan kuat yang memberikan damage tinggi'
+    });
+
+    this.skills.set('Shield Bash', {
+      name: 'Shield Bash',
+      level: 5,
+      mpCost: 30,
+      damage: 40,
+      stun: 1,
+      description: 'Serangan dengan perisai yang dapat membuat musuh pingsan'
+    });
+
+    this.skills.set('War Cry', {
+      name: 'War Cry',
+      level: 10,
+      mpCost: 40,
+      damage: 30,
+      aoe: true,
+      description: 'Teriakan perang yang memberikan damage area'
+    });
+
+    // Mage Skills
+    this.skills.set('Fireball', {
+      name: 'Fireball',
+      level: 1,
+      mpCost: 25,
+      damage: 45,
+      element: 'fire',
+      description: 'Bola api yang memberikan damage api'
+    });
+
+    this.skills.set('Ice Shield', {
+      name: 'Ice Shield',
+      level: 5,
+      mpCost: 35,
+      defense: 20,
+      duration: 3,
+      description: 'Perisai es yang memberikan pertahanan tambahan'
+    });
+
+    this.skills.set('Chain Lightning', {
+      name: 'Chain Lightning',
+      level: 10,
+      mpCost: 45,
+      damage: 35,
+      chain: 3,
+      element: 'lightning',
+      description: 'Petir yang dapat melompat ke beberapa musuh'
+    });
+
+    // Assassin Skills
+    this.skills.set('Backstab', {
+      name: 'Backstab',
+      level: 1,
+      mpCost: 20,
+      damage: 60,
+      critChance: 0.3,
+      description: 'Serangan dari belakang dengan chance critical tinggi'
+    });
+
+    this.skills.set('Poison Blade', {
+      name: 'Poison Blade',
+      level: 5,
+      mpCost: 30,
+      damage: 30,
+      poison: 3,
+      description: 'Serangan beracun yang memberikan damage over time'
+    });
+
+    this.skills.set('Shadow Step', {
+      name: 'Shadow Step',
+      level: 10,
+      mpCost: 40,
+      damage: 40,
+      teleport: true,
+      description: 'Teleportasi ke belakang musuh dan memberikan serangan'
+    });
+
+    // Archer Skills
+    this.skills.set('Precise Shot', {
+      name: 'Precise Shot',
+      level: 1,
+      mpCost: 20,
+      damage: 55,
+      accuracy: 1.2,
+      description: 'Tembakan tepat yang memberikan damage tinggi'
+    });
+
+    this.skills.set('Rain of Arrows', {
+      name: 'Rain of Arrows',
+      level: 5,
+      mpCost: 35,
+      damage: 30,
+      aoe: true,
+      description: 'Hujan panah yang memberikan damage area'
+    });
+
+    this.skills.set('Eagle Eye', {
+      name: 'Eagle Eye',
+      level: 10,
+      mpCost: 40,
+      damage: 45,
+      critChance: 0.5,
+      description: 'Tembakan dengan chance critical sangat tinggi'
+    });
+  }
+
+  unlockSkill(skillName) {
+    if (this.skills.has(skillName)) {
+      this.unlockedSkills.add(skillName);
+      return true;
+    }
+    return false;
+  }
+
+  getSkill(skillName) {
+    return this.skills.get(skillName);
+  }
+
+  isSkillUnlocked(skillName) {
+    return this.unlockedSkills.has(skillName);
+  }
+
+  getUnlockedSkills() {
+    return Array.from(this.unlockedSkills).map(name => this.skills.get(name));
+  }
+}
+
 // ==================== KELAS KARAKTER LANJUTAN ====================
 class Character {
   constructor(name, className) {
@@ -162,6 +305,8 @@ class BattleSystem {
   }
 
   executeTurn(action) {
+    if (!this.isActive) return 'Battle sudah selesai!';
+    
     const currentCombatant = this.turnOrder[this.currentTurn];
     let result = '';
     
@@ -182,8 +327,28 @@ class BattleSystem {
   }
 
   handlePlayerAction(combatant, action) {
-    // Implementasi aksi pemain yang kompleks
-    // [Diimplementasikan di subclass untuk integrasi dengan chatbot]
+    if (action.type === 'attack') {
+      const target = this.enemies[0];
+      const { damage, isCrit } = this.calculateDamage(combatant, target);
+      target.hp -= damage;
+      return `${combatant.name} menyerang ${target.name} dan memberikan ${damage} damage${isCrit ? ' (CRITICAL!)' : ''}!`;
+    }
+    
+    if (action.type === 'skill') {
+      const skill = combatant.skillTree.getSkill(action.skillName);
+      if (!skill) return 'Skill tidak ditemukan!';
+      
+      if (combatant.mp < skill.mpCost) return 'MP tidak cukup!';
+      
+      combatant.mp -= skill.mpCost;
+      const target = this.enemies[0];
+      const { damage, isCrit } = this.calculateDamage(combatant, target, skill);
+      target.hp -= damage;
+      
+      return `${combatant.name} menggunakan ${skill.name} dan memberikan ${damage} damage${isCrit ? ' (CRITICAL!)' : ''}!`;
+    }
+    
+    return 'Aksi tidak valid!';
   }
 
   handleEnemyAI(enemy) {
@@ -196,13 +361,13 @@ class BattleSystem {
       ? skills[Math.floor(Math.random() * skills.length)]
       : 'attack';
 
-    const target = this.party.filter(p => p.hp > 0)[0];
+    const target = this.party[0];
     return enemy.useSkill(action, target);
   }
 
   calculateDamage(attacker, defender, skill) {
     let baseDamage = attacker.attack;
-    if (skill.element) {
+    if (skill?.element) {
       const elementRelation = this.elementalMatrix[skill.element];
       if (elementRelation.strongAgainst === defender.element) {
         baseDamage *= 1.5;
@@ -232,8 +397,8 @@ class BattleSystem {
   }
 
   distributeRewards() {
-    const totalExp = this.enemies.reduce((sum, e) => sum + e.expReward, 0);
-    const totalGold = this.enemies.reduce((sum, e) => sum + e.goldReward, 0);
+    const totalExp = this.enemies.reduce((sum, e) => sum + e.exp, 0);
+    const totalGold = this.enemies.reduce((sum, e) => sum + e.gold, 0);
     const loot = this.enemies.flatMap(e => e.loot);
     
     this.party.forEach(member => {
@@ -243,6 +408,10 @@ class BattleSystem {
     
     this.party[0].gold += totalGold;
     loot.forEach(item => this.party[0].inventory.addItem(item));
+  }
+
+  nextTurn() {
+    this.currentTurn = (this.currentTurn + 1) % this.turnOrder.length;
   }
 }
 
@@ -399,14 +568,125 @@ const SkillDB = {
   // ... skill lainnya
 };
 
+// ==================== FUNGSI BANTUAN ====================
+function weightedRandom(weights) {
+  const total = Object.values(weights).reduce((a, b) => a + b, 0);
+  let random = Math.random() * total;
+  
+  for (const [key, weight] of Object.entries(weights)) {
+    random -= weight;
+    if (random <= 0) return key;
+  }
+  
+  return Object.keys(weights)[0];
+}
+
+// ==================== DATABASE ITEM ====================
 const ItemDB = {
+  // Weapons
+  'wooden_sword': {
+    name: 'Wooden Sword',
+    type: 'weapon',
+    weight: 2,
+    attack: 5,
+    magicAttack: 0,
+    description: 'Pedang kayu sederhana'
+  },
+  'iron_sword': {
+    name: 'Iron Sword',
+    type: 'weapon',
+    weight: 4,
+    attack: 10,
+    magicAttack: 0,
+    description: 'Pedang besi yang lebih kuat'
+  },
+  'fire_staff': {
+    name: 'Fire Staff',
+    type: 'weapon',
+    weight: 3,
+    attack: 3,
+    magicAttack: 15,
+    element: 'fire',
+    description: 'Tongkat yang menguatkan sihir api'
+  },
+  'hunting_bow': {
+    name: 'Hunting Bow',
+    type: 'weapon',
+    weight: 2,
+    attack: 8,
+    magicAttack: 0,
+    description: 'Busur untuk berburu'
+  },
+
+  // Armors
+  'leather_armor': {
+    name: 'Leather Armor',
+    type: 'armor',
+    weight: 3,
+    defense: 5,
+    description: 'Zirah kulit ringan'
+  },
+  'iron_armor': {
+    name: 'Iron Armor',
+    type: 'armor',
+    weight: 6,
+    defense: 10,
+    description: 'Zirah besi yang kuat'
+  },
+  'mage_robe': {
+    name: 'Mage Robe',
+    type: 'armor',
+    weight: 2,
+    defense: 3,
+    magicDefense: 8,
+    description: 'Jubah yang meningkatkan pertahanan sihir'
+  },
+
+  // Accessories
+  'health_ring': {
+    name: 'Health Ring',
+    type: 'accessory',
+    weight: 0.5,
+    hp: 20,
+    description: 'Cincin yang meningkatkan HP'
+  },
+  'mana_ring': {
+    name: 'Mana Ring',
+    type: 'accessory',
+    weight: 0.5,
+    mp: 20,
+    description: 'Cincin yang meningkatkan MP'
+  },
+  'strength_ring': {
+    name: 'Strength Ring',
+    type: 'accessory',
+    weight: 0.5,
+    attack: 5,
+    description: 'Cincin yang meningkatkan serangan'
+  },
+
+  // Consumables
   'health_potion': {
     name: 'Health Potion',
     type: 'consumable',
     weight: 0.5,
-    effect: { hp: 50 }
+    effect: { hp: 50 },
+    description: 'Ramuan yang memulihkan HP'
   },
-  // ... item lainnya
+  'mana_potion': {
+    name: 'Mana Potion',
+    type: 'consumable',
+    weight: 0.5,
+    effect: { mp: 50 },
+    description: 'Ramuan yang memulihkan MP'
+  },
+  'stamina_potion': {
+    name: 'Stamina Potion',
+    type: 'consumable',
+    weight: 0.5,
+    effect: { stamina: 50 },
+    description: 'Ramuan yang memulihkan stamina'
+  }
 };
 
 const LocationDB = {
