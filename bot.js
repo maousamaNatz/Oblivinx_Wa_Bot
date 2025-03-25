@@ -21,7 +21,7 @@ const {
   log,
 } = require("./src/utils/logger");
 const leveling = require("./src/leveling");
-const {                                   
+const {
   config,
   store,
   msgRetryCounterCache,
@@ -43,6 +43,7 @@ const crypto = require("crypto");
 const os = require("os");
 const { messageQueue } = require("./src/utils/messageQueue");
 const messageHandlers = require("./src/utils/messageHandlers");
+const { startPeriodicCleanup } = require("./src/utils/cleaner");
 process.env.PREFIX = process.env.PREFIX?.trim() || "!";
 // Define the path to the ASCII file
 const asciiFilePath = path.join(__dirname, "database", "ascii.txt");
@@ -61,10 +62,10 @@ if (!MessageType) {
     GROUP_PARTICIPANT_ADD: 28,
     GROUP_PARTICIPANT_REMOVE: 27,
     GROUP_PARTICIPANT_PROMOTE: 47,
-    GROUP_PARTICIPANT_DEMOTE: 48
+    GROUP_PARTICIPANT_DEMOTE: 48,
   };
-  
-  // Export MessageType 
+
+  // Export MessageType
   global.MessageType = MessageType;
 }
 
@@ -192,13 +193,13 @@ function promiseWithTimeout(promise, timeoutMs) {
     const timeout = setTimeout(() => {
       reject(new Error(`Promise timeout after ${timeoutMs}ms`));
     }, timeoutMs);
-    
+
     promise
-      .then(result => {
+      .then((result) => {
         clearTimeout(timeout);
         resolve(result);
       })
-      .catch(error => {
+      .catch((error) => {
         clearTimeout(timeout);
         reject(error);
       });
@@ -401,24 +402,25 @@ const rateLimiter = new Map();
 const RATE_LIMIT_DELAY = 1000; // 1 detik delay
 
 function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function withRateLimit(key, operation) {
   const now = Date.now();
   const lastOperation = rateLimiter.get(key) || 0;
-  
+
   if (now - lastOperation < RATE_LIMIT_DELAY) {
     await delay(RATE_LIMIT_DELAY - (now - lastOperation));
   }
-  
+
   try {
     const result = await operation();
     rateLimiter.set(key, Date.now());
     return result;
   } catch (error) {
-    if (error.message.includes('rate-overlimit')) {
-      await delay(RATE_LIMIT_DELAY * 2);
+    if (error.message.includes("rate-overlimit")) {
+      botLogger.warn(`Rate limit exceeded for ${key}, waiting longer...`);
+      await delay(RATE_LIMIT_DELAY * 5); // Perbesar delay menjadi 5x lipat
       return withRateLimit(key, operation);
     }
     throw error;
@@ -570,8 +572,9 @@ const initBot = async () => {
               let groupData = await db.getGroup(groupId);
               if (!groupData) {
                 try {
-                  groupMetadata = await withRateLimit(`groupMetadata-${groupId}`, () =>
-                    effectiveSock.groupMetadata(groupId)
+                  groupMetadata = await withRateLimit(
+                    `groupMetadata-${groupId}`,
+                    () => effectiveSock.groupMetadata(groupId)
                   );
                   const newGroup = await db.addGroup({
                     group_id: groupId,
@@ -634,8 +637,9 @@ const initBot = async () => {
                 groupMetadata = groupInfo;
               } else if (!groupMetadata) {
                 try {
-                  groupMetadata = await withRateLimit(`groupMetadata-${groupId}`, () =>
-                    effectiveSock.groupMetadata(groupId)
+                  groupMetadata = await withRateLimit(
+                    `groupMetadata-${groupId}`,
+                    () => effectiveSock.groupMetadata(groupId)
                   );
                 } catch (error) {
                   botLogger.warn(
@@ -740,7 +744,7 @@ const initBot = async () => {
             `Panggilan dari ${callerId} ditolak (Percobaan: ${callAttempts[callerId]}/${MAX_CALL_ATTEMPTS})`
           );
         },
-        'groups.update': async (updates) => {
+        "groups.update": async (updates) => {
           if (isReconnecting) {
             botLogger.info("Skipping groups.update during reconnection");
             return;
@@ -749,41 +753,48 @@ const initBot = async () => {
             botLogger.warn("Socket not available for groups.update");
             return;
           }
-          
+
           botLogger.info(`Menerima pembaruan grup: ${JSON.stringify(updates)}`);
-          
+
           for (const update of updates) {
             try {
               // Ambil metadata grup terbaru
-              const metadata = await withRateLimit(`groupMetadata-${update.id}`, () => 
-                sock.groupMetadata(update.id)
+              const metadata = await withRateLimit(
+                `groupMetadata-${update.id}`,
+                () => sock.groupMetadata(update.id)
               );
-              
+
               // Perbarui cache
               groupCache.set(update.id, metadata);
-              
+
               // Ambil data grup dari database
               const existingGroup = await db.getGroup(update.id);
-              
+
               // Siapkan data yang akan diperbarui
               const updateData = {
-                updated_at: new Date().toISOString()
+                updated_at: new Date().toISOString(),
               };
-              
+
               // Update berdasarkan tipe pembaruan yang diterima
               if (update.subject) {
                 updateData.group_name = update.subject;
-                botLogger.info(`Grup ${update.id} mengubah nama menjadi: ${update.subject}`);
+                botLogger.info(
+                  `Grup ${update.id} mengubah nama menjadi: ${update.subject}`
+                );
               }
-              
+
               if (update.announce !== undefined) {
-                botLogger.info(`Grup ${update.id} mengubah pengaturan announce: ${update.announce}`);
+                botLogger.info(
+                  `Grup ${update.id} mengubah pengaturan announce: ${update.announce}`
+                );
               }
-              
+
               if (update.restrict !== undefined) {
-                botLogger.info(`Grup ${update.id} mengubah pengaturan restrict: ${update.restrict}`);
+                botLogger.info(
+                  `Grup ${update.id} mengubah pengaturan restrict: ${update.restrict}`
+                );
               }
-              
+
               if (update.descId) {
                 // Deskripsi grup berubah, coba ambil deskripsi baru
                 if (metadata.desc) {
@@ -791,10 +802,10 @@ const initBot = async () => {
                   botLogger.info(`Grup ${update.id} mengubah deskripsi`);
                 }
               }
-              
+
               // Perbarui jumlah anggota
               updateData.total_members = metadata.participants.length;
-              
+
               // Periksa apakah grupnya ada atau perlu dibuat baru
               if (existingGroup) {
                 // Update grup yang sudah ada
@@ -810,9 +821,11 @@ const initBot = async () => {
                   total_members: metadata.participants.length,
                   description: metadata.desc || null,
                   created_at: new Date().toISOString(),
-                  registration_date: new Date().toISOString()
+                  registration_date: new Date().toISOString(),
                 });
-                botLogger.info(`Grup baru ditambahkan ke database: ${update.id}`);
+                botLogger.info(
+                  `Grup baru ditambahkan ke database: ${update.id}`
+                );
               }
             } catch (error) {
               botLogger.error(`Error updating group ${update.id}:`, error);
@@ -835,28 +848,31 @@ const initBot = async () => {
 
           try {
             // Update cache metadata grup
-            const metadata = await withRateLimit(`groupMetadata-${event.id}`, () =>
-              sock.groupMetadata(event.id)
+            const metadata = await withRateLimit(
+              `groupMetadata-${event.id}`,
+              () => sock.groupMetadata(event.id)
             );
             groupCache.set(event.id, metadata);
 
             // Update data di database
             const groupId = event.id;
             let existingGroup = await db.getGroup(groupId);
-            
+
             if (existingGroup) {
               // Update total anggota
               await db.updateGroup(groupId, {
                 total_members: metadata.participants.length,
-                updated_at: new Date().toISOString()
+                updated_at: new Date().toISOString(),
               });
-              
-              botLogger.info(`Updated group ${groupId} member count to ${metadata.participants.length}`);
+
+              botLogger.info(
+                `Updated group ${groupId} member count to ${metadata.participants.length}`
+              );
             } else {
               // Grup belum ada di database, tambahkan
               try {
                 const ownerJid = metadata.owner || metadata.participants[0]?.id;
-                
+
                 existingGroup = await db.addGroup({
                   group_id: groupId,
                   group_name: metadata.subject || "Unnamed Group",
@@ -869,18 +885,20 @@ const initBot = async () => {
                   level: 1,
                   total_xp: 0,
                   current_xp: 0,
-                  xp_to_next_level: 1000
+                  xp_to_next_level: 1000,
                 });
                 botLogger.info(`Added new group to database: ${groupId}`);
               } catch (error) {
-                botLogger.error(`Failed to add group to database: ${error.message}`);
+                botLogger.error(
+                  `Failed to add group to database: ${error.message}`
+                );
                 return; // Keluar jika gagal menambahkan grup
               }
             }
 
             // Cek tipe update (add/remove)
             const { participants, action } = event;
-            
+
             // Import fungsi welcome/goodbye
             const {
               handleGroupJoin,
@@ -907,13 +925,20 @@ const initBot = async () => {
 
                 // Panggil fungsi untuk handle welcome
                 try {
-                  botLogger.info(`Memanggil handleGroupJoin untuk ${participants.length} peserta baru di grup ${event.id}`);
+                  botLogger.info(
+                    `Memanggil handleGroupJoin untuk ${participants.length} peserta baru di grup ${event.id}`
+                  );
                   await handleGroupJoin(sock, mockMsg);
                 } catch (err) {
-                  botLogger.error(`Error handling group join via event: ${err.message}`, err);
+                  botLogger.error(
+                    `Error handling group join via event: ${err.message}`,
+                    err
+                  );
                 }
               } else {
-                botLogger.info(`Welcome message tidak aktif untuk grup ${event.id} atau grup tidak ditemukan`);
+                botLogger.info(
+                  `Welcome message tidak aktif untuk grup ${event.id} atau grup tidak ditemukan`
+                );
               }
             } else if (action === "remove") {
               // Cek apakah goodbye_message aktif
@@ -926,22 +951,34 @@ const initBot = async () => {
 
                 // Panggil fungsi untuk handle goodbye
                 try {
-                  botLogger.info(`Memanggil handleGroupLeave untuk ${participants.length} peserta yang keluar dari grup ${event.id}`);
+                  botLogger.info(
+                    `Memanggil handleGroupLeave untuk ${participants.length} peserta yang keluar dari grup ${event.id}`
+                  );
                   await handleGroupLeave(sock, mockMsg);
                 } catch (err) {
-                  botLogger.error(`Error handling group leave via event: ${err.message}`, err);
+                  botLogger.error(
+                    `Error handling group leave via event: ${err.message}`,
+                    err
+                  );
                 }
               } else {
-                botLogger.info(`Goodbye message tidak aktif untuk grup ${event.id} atau grup tidak ditemukan`);
+                botLogger.info(
+                  `Goodbye message tidak aktif untuk grup ${event.id} atau grup tidak ditemukan`
+                );
               }
             } else if (action === "promote" || action === "demote") {
               // Update status admin di cache jika perlu
-              const updatedMetadata = await withRateLimit(`groupMetadata-${event.id}`, () =>
-                sock.groupMetadata(event.id)
+              const updatedMetadata = await withRateLimit(
+                `groupMetadata-${event.id}`,
+                () => sock.groupMetadata(event.id)
               );
               groupCache.set(event.id, updatedMetadata);
-              
-              botLogger.info(`Group ${event.id} participant(s) ${action}d: ${participants.join(', ')}`);
+
+              botLogger.info(
+                `Group ${
+                  event.id
+                } participant(s) ${action}d: ${participants.join(", ")}`
+              );
             }
           } catch (error) {
             botLogger.error(
@@ -960,24 +997,29 @@ const initBot = async () => {
 
           const msg = messages[0];
           if (!msg) return;
-          
+
           // Proses pesan dan cek jika ini adalah pesan grup
           if (msg.key.remoteJid) {
-            const isGroup = msg.key.remoteJid.endsWith('@g.us');
+            const isGroup = msg.key.remoteJid.endsWith("@g.us");
             const groupId = isGroup ? msg.key.remoteJid : null;
-            const sender = isGroup ? (msg.key.participant || msg.key.remoteJid) : msg.key.remoteJid;
-            
+            const sender = isGroup
+              ? msg.key.participant || msg.key.remoteJid
+              : msg.key.remoteJid;
+
             // Hapus panggilan ke handleGroupNotification
-            
+
             // Lanjutkan ke handler normal untuk semua jenis pesan
             handlers.messagesUpsert({ messages, type });
           }
         } catch (error) {
-          botLogger.error(`Error saat memproses pesan: ${error.message}`, error);
+          botLogger.error(
+            `Error saat memproses pesan: ${error.message}`,
+            error
+          );
         }
       });
       sock.ev.on("call", handlers.call);
-      sock.ev.on("groups.update", handlers['groups.update']);
+      sock.ev.on("groups.update", handlers["groups.update"]);
       sock.ev.on(
         "group-participants.update",
         handlers["group-participants.update"]
@@ -1345,16 +1387,19 @@ const commandHandler = (text) => {
   try {
     // Inisialisasi database terlebih dahulu
     await db.initializeDatabase();
-    
+
     // Inisialisasi bot utama
     const mainBot = await initBot();
     if (!mainBot) {
       throw new Error("Failed to initialize main bot");
     }
-    
+
     // Inisialisasi message queue handlers
     initializeMessageQueue();
     leveling.setupMessageHandler(mainBot);
+
+    // Mulai pembersihan berkala untuk folder temp
+    startPeriodicCleanup();
 
     // Setelah bot utama berhasil diinisialisasi, coba inisialisasi bot anak
     try {
@@ -1410,46 +1455,4 @@ function initializeMessageQueue() {
   botLogger.info(
     `Processing up to ${messageQueue.maxConcurrentProcessing} messages concurrently`
   );
-}
-
-// Tambahkan fungsi handleGroupNotification yang tidak menggunakan fullGroupSync
-async function handleGroupNotification(sock, msg, sender, isGroup, groupId) {
-  try {
-    if (!isGroup || !msg.messageStubType) return;
-    
-    // Import fungsi welcome/goodbye
-    const {
-      handleGroupJoin,
-      handleGroupLeave,
-    } = require("./src/lib/welcomeNgoodbyemsg");
-    
-    // Cek tipe notifikasi
-    switch (msg.messageStubType) {
-      case 27: // GROUP_PARTICIPANT_LEAVE
-        try {
-          const existingGroup = await db.getGroup(groupId);
-          if (existingGroup && existingGroup.goodbye_message === 1) {
-            await handleGroupLeave(sock, msg);
-          }
-        } catch (error) {
-          botLogger.error(`Error handling group leave: ${error.message}`, error);
-        }
-        break;
-        
-      case 28: // GROUP_PARTICIPANT_ADD
-        try {
-          const existingGroup = await db.getGroup(groupId);
-          if (existingGroup && existingGroup.welcome_message === 1) {
-            await handleGroupJoin(sock, msg);
-          }
-        } catch (error) {
-          botLogger.error(`Error handling group join: ${error.message}`, error);
-        }
-        break;
-        
-      // Tambahkan case lain jika diperlukan
-    }
-  } catch (error) {
-    botLogger.error(`Error in handleGroupNotification: ${error.message}`, error);
-  }
 }

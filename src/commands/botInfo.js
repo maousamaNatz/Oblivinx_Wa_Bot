@@ -77,27 +77,23 @@ global.Oblixn.cmd({
         }
 
         // Hanya ambil command utama (bukan alias)
-        if (key === cmd.config.name) {
-          if (
-            isOwner ||
-            (cmd.config.category !== "owner" &&
-              cmd.config.category !== "ownercommand")
-          ) {
-            commands.set(cmd.config.name, {
-              name: cmd.config.name,
-              category: cmd.config.category,
-            });
-            botLogger.info(`Command ${cmd.config.name} ditambahkan ke daftar`);
-          } else {
-            botLogger.info(
-              `Command ${cmd.config.name} skipped: not owner dan category ${cmd.config.category}`
-            );
-          }
+        if (
+          isOwner ||
+          (
+            cmd.config.category !== "owner" &&
+            cmd.config.category !== "ownercommand")
+        ) {
+          commands.set(cmd.config.name, {
+            name: cmd.config.name,
+            category: cmd.config.category,
+          });
+          botLogger.info(`Command ${cmd.config.name} ditambahkan ke daftar`);
         } else {
           botLogger.info(
-            `Skipping alias: ${key} untuk command ${cmd.config.name}`
+            `Command ${cmd.config.name} skipped: not owner dan category ${cmd.config.category}`
           );
         }
+        
       }
 
       botLogger.info(
@@ -326,3 +322,58 @@ async function getRank(userId) {
   );
   return rank[0].position;
 }
+
+global.Oblixn.cmd({
+  name: "ownerhelp",
+  alias: ["helpOw", "helpowner"],
+  desc: "Help khusus untuk owner",
+  category: "general",
+  async exec(msg, { args }) {
+    // Cek apakah pengguna adalah owner
+    if (!msg.isOwner) {
+      return await msg.reply("Perintah ini hanya bisa digunakan oleh owner!");
+    }
+
+    try {
+      // Membuat Map untuk menyimpan perintah khusus owner
+      const commandsOwner = new Map();
+
+      // Mengambil semua perintah dari Oblixn
+      const allCommands = global.Oblixn.commands; // Asumsi Oblixn menyimpan perintah di sini
+
+      // Filter perintah yang hanya bisa diakses oleh owner
+      allCommands.forEach((cmd, name) => {
+        // Asumsi setiap perintah memiliki properti `ownerOnly` atau sejenis
+        if (cmd.ownerOnly || cmd.category === "owner") {
+          commandsOwner.set(name, {
+            name: name,
+            desc: cmd.desc || "Tidak ada deskripsi",
+            category: cmd.category || "owner"
+          });
+        }
+      });
+
+      // Jika tidak ada perintah khusus owner
+      if (commandsOwner.size === 0) {
+        return await msg.reply("Tidak ada perintah khusus untuk owner saat ini.");
+      }
+
+      // Membuat pesan bantuan (help) untuk owner
+      let helpMessage = "📜 *Daftar Perintah Khusus Owner*\n\n";
+      commandsOwner.forEach((cmd) => {
+        helpMessage += `🔹 *${cmd.name}*\n`;
+        helpMessage += `   Deskripsi: ${cmd.desc}\n`;
+        helpMessage += `   Kategori: ${cmd.category}\n\n`;
+      });
+
+      helpMessage += "Gunakan perintah dengan bijak! 🚀";
+
+      // Mengirim pesan bantuan
+      await msg.reply(helpMessage);
+
+    } catch (error) {
+      console.error("Error in Owner command:", error);
+      await msg.reply("Terjadi kesalahan saat menampilkan daftar perintah owner. Silakan coba lagi nanti.");
+    }
+  }
+});

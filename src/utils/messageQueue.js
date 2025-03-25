@@ -8,9 +8,11 @@ class MessageQueue {
   constructor(options = {}) {
     this.queue = [];
     this.processingQueue = new Map(); // Untuk pelacakan pesan yang sedang diproses
-    this.maxConcurrentProcessing = options.maxConcurrent || 50; // Jumlah pesan yang diproses secara bersamaan
-    this.maxQueueSize = options.maxQueueSize || 99999999; // Batas maksimum antrian
-    this.processingDelay = options.processingDelay || 5; // Delay dalam ms antar pemrosesan pesan
+    this.maxConcurrentProcessing = options.maxConcurrent || 25; // Kurangi jumlah pesan yang diproses bersamaan
+    this.maxQueueSize = options.maxQueueSize || 5000; // Batas lebih wajar untuk antrian
+    this.processingDelay = options.processingDelay || 50; // Tingkatkan delay antar pemrosesan pesan
+    this.rateLimitDelay = options.rateLimitDelay || 3000; // Delay jika terkena rate limit
+    this.rateLimitTracker = new Map(); // Untuk melacak rate limit berdasarkan target
     this.priorityLevels = {
       OWNER: 0,      // Prioritas tertinggi (pemilik bot)
       ADMIN: 1,      // Admin grup
@@ -24,6 +26,7 @@ class MessageQueue {
       totalReceived: 0,
       totalProcessed: 0,
       totalErrors: 0,
+      totalRateLimited: 0,
       startTime: Date.now(),
       highestQueueLength: 0
     };
@@ -31,6 +34,29 @@ class MessageQueue {
     
     // Interval untuk memantau status antrian
     this.monitorInterval = setInterval(() => this.monitorQueueStatus(), 30000);
+    
+    // Interval untuk membersihkan rate limit tracker
+    this.cleanupInterval = setInterval(() => this.cleanupRateLimitTracker(), 60000);
+  }
+  
+  /**
+   * Membersihkan rate limit tracker secara berkala
+   * @private
+   */
+  cleanupRateLimitTracker() {
+    const now = Date.now();
+    let count = 0;
+    
+    for (const [key, timestamp] of this.rateLimitTracker.entries()) {
+      if (now - timestamp > 60000) { // Lebih dari 1 menit
+        this.rateLimitTracker.delete(key);
+        count++;
+      }
+    }
+    
+    if (count > 0) {
+      botLogger.debug(`Cleaned up ${count} old entries from rate limit tracker`);
+    }
   }
   
   /**
@@ -59,7 +85,7 @@ class MessageQueue {
   }
   
   /**
-   * Menambahkan pesan ke antrian
+   * Menambahkan pesan ke antrian dengan pengecekan duplikat
    * @param {Object} message - Objek pesan WhatsApp yang telah diproses
    * @param {Object} metadata - Metadata tambahan (termasuk prioritas)
    * @returns {string} ID pesan dalam antrian
@@ -67,6 +93,12 @@ class MessageQueue {
   enqueue(message, metadata = {}) {
     // Buat ID unik untuk pesan
     const messageId = metadata.id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Cek duplicate message dalam waktu singkat (debouncing)
+    if (message.messageText && this.isDuplicateMessage(message)) {
+      botLogger.debug(`Duplicate message detected: ${message.messageText.substring(0, 30)}...`);
+      return null;
+    }
     
     // Tentukan prioritas pesan
     const priority = this.determineMessagePriority(message, metadata);
@@ -118,6 +150,28 @@ class MessageQueue {
   }
   
   /**
+   * Cek apakah pesan adalah duplikat dari pesan yang baru saja diterima
+   * @private
+   */
+  isDuplicateMessage(message) {
+    if (!message.messageText) return false;
+    
+    // Buat fingerprint sederhana untuk pesan
+    const fingerprint = `${message.sender}:${message.messageText}`;
+    const now = Date.now();
+    
+    // Cek apakah fingerprint sudah ada di tracker dan belum kedaluwarsa (5 detik)
+    const lastSeen = this.rateLimitTracker.get(fingerprint);
+    if (lastSeen && now - lastSeen < 5000) {
+      return true;
+    }
+    
+    // Catat fingerprint baru
+    this.rateLimitTracker.set(fingerprint, now);
+    return false;
+  }
+  
+  /**
    * Menentukan prioritas pesan berdasarkan pengirim dan tipe
    * @private
    */
@@ -147,44 +201,42 @@ class MessageQueue {
   }
   
   /**
-   * Menentukan tipe pesan
+   * Menentukan tipe pesan (text, image, sticker, dll.)
    * @private
    */
   determineMessageType(message) {
-    if (!message || !message.message) return 'unknown';
+    // Cek jika ini adalah pesan command
+    if (message.messageText && message.messageText.startsWith('!')) {
+      return 'command';
+    }
     
-    const m = message.message;
+    // Cek berdasarkan konten pesan
+    if (message.message) {
+      if (message.message.imageMessage) return 'image';
+      if (message.message.videoMessage) return 'video';
+      if (message.message.audioMessage) return 'audio';
+      if (message.message.stickerMessage) return 'sticker';
+      if (message.message.documentMessage) return 'document';
+      if (message.message.locationMessage) return 'location';
+      if (message.message.contactMessage) return 'contact';
+    }
     
-    if (m.conversation) return 'text';
-    if (m.imageMessage) return 'image';
-    if (m.videoMessage) return 'video';
-    if (m.audioMessage) return 'audio';
-    if (m.stickerMessage) return 'sticker';
-    if (m.documentMessage) return 'document';
-    if (m.contactMessage) return 'contact';
-    if (m.locationMessage) return 'location';
-    if (m.liveLocationMessage) return 'liveLocation';
-    if (m.buttonsResponseMessage) return 'buttonsResponse';
-    if (m.listResponseMessage) return 'listResponse';
-    if (m.templateButtonReplyMessage) return 'templateButtonReply';
-    
-    return 'unknown';
+    // Default ke text jika tidak ada yang cocok
+    return 'text';
   }
   
   /**
-   * Menemukan index pesan dengan prioritas terendah
+   * Mencari indeks pesan dengan prioritas terendah
    * @private
    */
   findLowestPriorityMessageIndex() {
-    if (this.queue.length === 0) return -1;
+    let lowestPriority = -1;
+    let lowestPriorityIndex = -1;
     
-    let lowestPriorityIndex = 0;
-    let lowestPriority = this.queue[0].metadata.priority;
-    
-    for (let i = 1; i < this.queue.length; i++) {
-      const currentPriority = this.queue[i].metadata.priority;
-      if (currentPriority > lowestPriority) {
-        lowestPriority = currentPriority;
+    for (let i = 0; i < this.queue.length; i++) {
+      const priority = this.queue[i].metadata.priority;
+      if (lowestPriority === -1 || priority > lowestPriority) {
+        lowestPriority = priority;
         lowestPriorityIndex = i;
       }
     }
@@ -193,7 +245,7 @@ class MessageQueue {
   }
   
   /**
-   * Memulai pemrosesan antrian pesan
+   * Memulai pemrosesan antrian pesan dengan mekanisme throttling untuk mencegah rate-limit
    */
   async processQueue() {
     if (this.isProcessing) return;
@@ -213,14 +265,44 @@ class MessageQueue {
       // Ambil pesan dari antrian
       const queuedMessage = this.queue.shift();
       
+      // Cek rate limit berdasarkan target/chat
+      const target = queuedMessage.message.chat || 'global';
+      if (this.isRateLimited(target)) {
+        // Jika rate limited, kembalikan ke antrian dengan prioritas lebih rendah
+        queuedMessage.metadata.priority += 0.5; // Turunkan prioritas sedikit
+        this.queue.push(queuedMessage);
+        await new Promise(resolve => setTimeout(resolve, 200)); // Tunggu sebentar
+        continue;
+      }
+      
+      // Update rate limit tracker
+      this.updateRateLimit(target);
+      
       // Tambahkan ke daftar pesan yang sedang diproses
       this.processingQueue.set(queuedMessage.id, queuedMessage);
       
       // Proses pesan secara asynchronous
       this.processMessage(queuedMessage)
         .catch(error => {
-          botLogger.error(`Error processing message ${queuedMessage.id}: ${error.message}`);
-          this.statistics.totalErrors++;
+          const errorMsg = error.message || 'Unknown error';
+          
+          if (errorMsg.includes('rate-overlimit')) {
+            this.statistics.totalRateLimited++;
+            botLogger.warn(`Rate limit reached for message ${queuedMessage.id}, target: ${target}`);
+            
+            // Tambahkan delay yang lebih lama untuk target ini
+            this.setRateLimit(target, this.rateLimitDelay * 2);
+            
+            // Coba lagi nanti jika belum mencapai batas retry
+            if (queuedMessage.metadata.attempts < 3) {
+              queuedMessage.metadata.attempts++;
+              queuedMessage.metadata.priority += 1; // Kurangi prioritas lebih banyak
+              this.queue.push(queuedMessage);
+            }
+          } else {
+            botLogger.error(`Error processing message ${queuedMessage.id}: ${errorMsg}`);
+            this.statistics.totalErrors++;
+          }
         })
         .finally(() => {
           // Hapus dari daftar pesan yang sedang diproses
@@ -235,7 +317,48 @@ class MessageQueue {
   }
   
   /**
-   * Memproses pesan individual
+   * Memeriksa apakah target sedang dalam rate limit
+   * @private
+   */
+  isRateLimited(target) {
+    const lastRequest = this.rateLimitTracker.get(`limit:${target}`);
+    if (!lastRequest) return false;
+    
+    const now = Date.now();
+    return (now - lastRequest.timestamp) < lastRequest.delay;
+  }
+  
+  /**
+   * Update rate limit tracker untuk target tertentu
+   * @private
+   */
+  updateRateLimit(target) {
+    const now = Date.now();
+    const existing = this.rateLimitTracker.get(`limit:${target}`);
+    
+    this.rateLimitTracker.set(`limit:${target}`, {
+      timestamp: now,
+      delay: existing && existing.rateLimited ? existing.delay : this.processingDelay,
+      rateLimited: false
+    });
+  }
+  
+  /**
+   * Set target sebagai rate limited dengan delay tertentu
+   * @private
+   */
+  setRateLimit(target, delay) {
+    this.rateLimitTracker.set(`limit:${target}`, {
+      timestamp: Date.now(),
+      delay: delay,
+      rateLimited: true
+    });
+    
+    botLogger.warn(`Rate limit set for ${target} with delay ${delay}ms`);
+  }
+  
+  /**
+   * Memproses pesan individual dengan penanganan error yang lebih baik
    * @private
    */
   async processMessage(queuedMessage) {
@@ -251,8 +374,13 @@ class MessageQueue {
         return;
       }
       
-      // Jalankan handler
-      await handler(message, metadata);
+      // Jalankan handler dengan timeout untuk mencegah handler hang
+      await Promise.race([
+        handler(message, metadata),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Handler timeout')), 30000)
+        )
+      ]);
       
       // Update statistik
       this.statistics.totalProcessed++;
@@ -289,6 +417,7 @@ Queue Status:
 - Total Received: ${this.statistics.totalReceived}
 - Total Processed: ${this.statistics.totalProcessed}
 - Total Errors: ${this.statistics.totalErrors}
+- Total Rate Limited: ${this.statistics.totalRateLimited}
 - Processing Rate: ${messagesPerSecond.toFixed(2)} msg/s
 - Highest Queue Length: ${this.statistics.highestQueueLength}
     `);
@@ -318,6 +447,7 @@ Queue Status:
    */
   cleanup() {
     clearInterval(this.monitorInterval);
+    clearInterval(this.cleanupInterval);
   }
 }
 

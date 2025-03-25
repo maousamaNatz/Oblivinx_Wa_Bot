@@ -5,9 +5,9 @@ const path = require('path');
 require('dotenv').config();
 
 // Ensure log directory exists
-const logDir = 'logs';
+const logDir = path.join(__dirname, '../../logs');
 if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir);
+  fs.mkdirSync(logDir, { recursive: true });
 }
 
 // Parse DEBUG_MODE with better fallback
@@ -119,32 +119,136 @@ const updateEnvFile = (key, value) => {
   }
 };
 
-// Create main logger instance
+// Format log kustom yang lebih informatif
+const customFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.splat(),
+  winston.format.printf(({ level, message, timestamp, stack, ...meta }) => {
+    let logMessage = `${timestamp} [${level.toUpperCase()}] ${message}`;
+    
+    // Tambahkan stack trace jika ada
+    if (stack) {
+      logMessage += `\n${stack}`;
+    }
+    
+    // Tambahkan metadata jika ada
+    if (Object.keys(meta).length > 0) {
+      try {
+        const metaStr = JSON.stringify(meta, null, 2);
+        
+      } catch (err) {
+        logMessage += `\nMetadata: [Unstringifiable Object]`;
+      }
+    }
+    
+    return logMessage;
+  })
+);
+
+// Logger utama bot dengan fitur rotasi dan pembatasan ukuran file
 const botLogger = winston.createLogger({
-  levels: logLevels.levels,
-  level: isDebugEnabled ? 'debug' : 'info',
-  format: combine(
-    timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-    logFormat
-  ),
+  level: process.env.LOG_LEVEL || 'info',
+  format: customFormat,
+  defaultMeta: { service: 'whatsapp-bot' },
   transports: [
+    // Log debug dan semua level di atasnya ke console
     new winston.transports.Console({
-      format: combine(
-        colorize({ all: true }),
-        consoleFormat
+      format: winston.format.combine(
+        winston.format.colorize(),
+        customFormat
       ),
-      silent: !isLoggingEnabled
+      level: 'debug'
     }),
+    
+    // Log errors ke file terpisah
     new winston.transports.File({
       filename: path.join(logDir, 'error.log'),
-      level: 'error'
+      level: 'error',
+      maxsize: 10 * 1024 * 1024, // 10 MB
+      maxFiles: 5,
+      tailable: true
     }),
+    
+    // Semua log ke file combined
     new winston.transports.File({
       filename: path.join(logDir, 'combined.log'),
-      silent: !isLoggingEnabled && true
+      maxsize: 20 * 1024 * 1024, // 20 MB
+      maxFiles: 10,
+      tailable: true
     })
-  ]
+  ],
+  // Tidak exit pada uncaught exceptions
+  exitOnError: false
 });
+
+// Tambahkan handler untuk uncaught exceptions
+process.on('uncaughtException', (error) => {
+  botLogger.error(`Uncaught exception: ${error.message}`, { 
+    stack: error.stack,
+    errorObject: error
+  });
+});
+
+// Tambahkan handler untuk unhandled rejection
+process.on('unhandledRejection', (reason, promise) => {
+  botLogger.error(`Unhandled rejection at: ${promise}, reason: ${reason}`, {
+    reason: reason instanceof Error ? reason.stack : reason
+  });
+});
+
+// Helper function untuk membuat child logger dengan context
+botLogger.createContextLogger = function(context) {
+  return botLogger.child({ context });
+};
+
+// Recovery logger untuk mencatat informasi pemulihan sistem
+botLogger.logRecovery = function(message, context = {}) {
+  botLogger.info(`[RECOVERY] ${message}`, { ...context, recoveryEvent: true });
+};
+
+// Fungsi untuk mencatat metric
+botLogger.logMetric = function(metricName, value, tags = {}) {
+  botLogger.info(`[METRIC] ${metricName}: ${value}`, { 
+    metric: metricName,
+    value,
+    tags,
+    isMetric: true
+  });
+};
+
+// Fungsi untuk mencatat ratelimit event
+botLogger.logRateLimit = function(source, details = {}) {
+  botLogger.warn(`[RATE_LIMIT] Rate limit reached for ${source}`, {
+    source,
+    ...details,
+    isRateLimit: true
+  });
+};
+
+// Fungsi sanitasi untuk menghapus informasi sensitif sebelum log
+botLogger.sanitizeAndLog = function(level, message, data = {}) {
+  // Daftar kata kunci sensitif yang perlu disensor
+  const sensitiveKeys = ['password', 'token', 'api_key', 'secret', 'auth', 'credentials'];
+  
+  // Fungsi rekursif untuk sanitasi objek
+  const sanitize = (obj) => {
+    if (!obj || typeof obj !== 'object') return obj;
+    
+    const sanitized = { ...obj };
+    for (const key in sanitized) {
+      if (sensitiveKeys.some(k => key.toLowerCase().includes(k))) {
+        sanitized[key] = '[REDACTED]';
+      } else if (typeof sanitized[key] === 'object') {
+        sanitized[key] = sanitize(sanitized[key]);
+      }
+    }
+    return sanitized;
+  };
+  
+  // Log dengan data yang sudah disanitasi
+  botLogger.log(level, message, sanitize(data));
+};
 
 // Create Baileys logger instance
 const baileysLogger = winston.createLogger({
@@ -467,13 +571,13 @@ const logStartup = (message, type = 'info') => {
   // Format the message
   const formattedMessage = isAsciiArt ? `ASCII Art: ${message}` : message;
   
-  // Always log to console with special formatting
-  console.log(winston.format.combine(
-    startupFormat
-  ).transform({ 
-    level: type, 
-    message: formattedMessage 
-  }).message);
+  // // Always log to console with special formatting
+  // console.log(winston.format.combine(
+  //   startupFormat
+  // ).transform({ 
+  //   level: type, 
+  //   message: formattedMessage 
+  // }).message);
   
   // Also log to file with normal formatting
   logToFile(message, type);

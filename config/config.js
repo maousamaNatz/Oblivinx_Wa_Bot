@@ -386,6 +386,11 @@ let retryCount = 0;
 const callAttempts = new Map();
 const MAX_CALL_ATTEMPTS = 3;
 
+// Tambahkan konstanta rate limit
+const RATE_LIMIT_DELAY = process.env.RATE_LIMIT_DELAY
+  ? parseInt(process.env.RATE_LIMIT_DELAY)
+  : 3000; // 3 detik default antara permintaan API
+
 // Tambahkan konstanta untuk status
 const BAN_TYPES = {
   CALL: "CALL_BAN", // Ban karena telepon (dengan blokir)
@@ -428,4 +433,5 @@ module.exports = {
   MAX_RECONNECT_RETRIES,
   CONNECTION_TIMEOUT,
   groupCache,
+  RATE_LIMIT_DELAY,
 };

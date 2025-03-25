@@ -1,8 +1,27 @@
 const path = require('path');
 const { createCanvas, loadImage, registerFont } = require('canvas');
 const fileManager = require('../../config/memoryAsync/readfile');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = fs.promises;
 const { botLogger } = require('../utils/logger');
+
+// Fungsi wrapper untuk existsSync yang lebih handal
+function safeExistsSync(filePath) {
+  try {
+    // Coba gunakan fs.existsSync dulu
+    return fs.existsSync(filePath);
+  } catch (error) {
+    botLogger.warn(`Error using fs.existsSync: ${error.message}, trying path.existsSync`);
+    try {
+      // Kalau gagal, coba gunakan path.existsSync
+      return path.existsSync(filePath);
+    } catch (err) {
+      // Jika keduanya gagal, return false saja untuk menghindari error
+      botLogger.error(`Error using path.existsSync: ${err.message}`);
+      return false;
+    }
+  }
+}
 
 // Daftarkan font kustom dengan penanganan error
 try {
@@ -20,6 +39,23 @@ try {
   });
 } catch (error) {
   console.error('Error registering font:', error);
+}
+
+// Tambahkan fungsi retry dengan delay eksponensial
+async function retryWithBackoff(fn, retries = 3, delay = 2000, factor = 2) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries <= 0) throw error;
+    
+    if (error.message.includes('rate-overlimit')) {
+      botLogger.warn(`Rate limit exceeded, retrying in ${delay}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryWithBackoff(fn, retries - 1, delay * factor, factor);
+    }
+    
+    throw error;
+  }
 }
 
 /**
@@ -187,7 +223,7 @@ async function createWelcomeImage(backgroundPath, userInfo, groupInfo) {
     
     // Cek apakah background ada
     try {
-      await fs.access(backgroundPath);
+      await fsPromises.access(backgroundPath);
     } catch (error) {
       botLogger.warn(`Background image not found at ${backgroundPath}, creating floral template`);
       // Buat background custom dengan bunga jika tidak ada file
@@ -223,8 +259,8 @@ async function createWelcomeImage(backgroundPath, userInfo, groupInfo) {
       // Simpan background custom
       const buffer = canvas.toBuffer('image/jpeg');
       backgroundPath = path.join(__dirname, '../assets/background/background.jpg');
-      await fs.mkdir(path.dirname(backgroundPath), { recursive: true });
-      await fs.writeFile(backgroundPath, buffer);
+      await fsPromises.mkdir(path.dirname(backgroundPath), { recursive: true });
+      await fsPromises.writeFile(backgroundPath, buffer);
     }
 
     // Load background image
@@ -311,7 +347,7 @@ async function createGoodbyeImage(backgroundPath, userInfo, groupInfo) {
     
     // Cek apakah background ada
     try {
-      await fs.access(backgroundPath);
+      await fsPromises.access(backgroundPath);
     } catch (error) {
       botLogger.warn(`Background image not found at ${backgroundPath}, creating floral template`);
       // Gunakan fungsi yang sama dengan welcome untuk membuat background
@@ -415,16 +451,17 @@ async function handleGroupJoin(sock, msg) {
     
     botLogger.info(`Mengirim welcome message untuk grup ${groupJid}`);
     
-    const groupMetadata = await sock.groupMetadata(groupJid);
+    // Gunakan retry untuk mendapatkan metadata grup
+    const groupMetadata = await retryWithBackoff(() => sock.groupMetadata(groupJid));
     const groupName = groupMetadata.subject;
     const memberCount = groupMetadata.participants.length;
     
-    // Dapatkan informasi siapa yang bergabung
+    // Dapatkan informasi siapa yang join
     if (!msg.messageStubParameters) {
-      return; // Bukan notifikasi member baru
+      return; // Bukan notifikasi member join
     }
     
-    // Dapatkan participant yang baru bergabung
+    // Dapatkan participant yang join
     const addedParticipants = msg.messageStubParameters || [];
     
     for (const participantJid of addedParticipants) {
@@ -433,9 +470,9 @@ async function handleGroupJoin(sock, msg) {
         let ppUrl = null;
         try {
           ppUrl = await sock.profilePictureUrl(participantJid, 'image');
-        } catch {
-          // Lanjutkan tanpa foto profil
-        } 
+        } catch (ppError) {
+          botLogger.warn(`Tidak dapat mendapatkan foto profil untuk ${participantJid}:`, ppError);
+        }
         
         // Dapatkan nama participant
         let participantName = participantJid.split('@')[0];
@@ -444,46 +481,86 @@ async function handleGroupJoin(sock, msg) {
           if (contact && contact.notify) {
             participantName = contact.notify;
           }
-        } catch {
-          // Lanjutkan dengan nomor sebagai nama
+        } catch (contactError) {
+          botLogger.warn(`Tidak dapat mendapatkan nama kontak untuk ${participantJid}:`, contactError);
         }
         
         // Buat gambar welcome
-        const welcomeImagePath = await createWelcomeImage(
-          null, // Gunakan background default
-          {
-            name: participantName,
-            jid: participantJid,
-            ppUrl: ppUrl
-          },
-          {
-            name: groupName,
-            memberCount: memberCount
-          }
-        );
+        let welcomeImagePath;
+        try {
+          welcomeImagePath = await createWelcomeImage(
+            null, // Gunakan background default
+            {
+              name: participantName,
+              jid: participantJid,
+              ppUrl: ppUrl
+            },
+            {
+              name: groupName,
+              memberCount: memberCount
+            }
+          );
+        } catch (imageError) {
+          botLogger.error(`Error membuat gambar welcome untuk ${participantJid}:`, imageError);
+          // Kirim pesan teks saja jika gagal membuat gambar
+          await sock.sendMessage(
+            groupJid,
+            {
+              text: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
+              mentions: [participantJid]
+            }
+          );
+          continue;
+        }
         
-        // Kirim gambar welcome
-        await sock.sendMessage(
-          groupJid,
-          {
-            image: { url: welcomeImagePath },
-            caption: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
-            mentions: [participantJid]
-          }
-        );
+        // Validasi file gambar dengan fungsi yang aman
+        if (!welcomeImagePath || !safeExistsSync(welcomeImagePath)) {
+          botLogger.warn(`File gambar welcome tidak ditemukan: ${welcomeImagePath}`);
+          // Kirim pesan teks sebagai fallback
+          await sock.sendMessage(
+            groupJid,
+            {
+              text: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
+              mentions: [participantJid]
+            }
+          );
+          continue;
+        }
+        
+        // Kirim gambar welcome dengan retry mechanism
+        try {
+          await retryWithBackoff(() => sock.sendMessage(
+            groupJid,
+            {
+              image: { url: welcomeImagePath },
+              caption: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
+              mentions: [participantJid]
+            }
+          ));
+        } catch (sendError) {
+          botLogger.error(`Error mengirim gambar welcome untuk ${participantJid}:`, sendError);
+          // Coba kirim pesan teks saja jika gagal mengirim gambar
+          await sock.sendMessage(
+            groupJid,
+            {
+              text: `Selamat datang @${participantJid.split('@')[0]} di grup ${groupName}! 👋`,
+              mentions: [participantJid]
+            }
+          );
+        }
         
         // Hapus file temporary
         try {
-          await fs.unlink(welcomeImagePath);
+          await fsPromises.unlink(welcomeImagePath);
         } catch (unlinkError) {
-          botLogger.error('Error deleting temporary welcome image:', unlinkError);
+          botLogger.error('Error menghapus file gambar welcome:', unlinkError);
         }
       } catch (participantError) {
-        botLogger.error(`Error handling join for participant ${participantJid}:`, participantError);
+        botLogger.error(`Error menangani join untuk participant ${participantJid}:`, participantError);
       }
     }
   } catch (error) {
-    botLogger.error('Error handling group join:', error);
+    botLogger.error('Error menangani group join:', error);
   }
 }
 
@@ -515,7 +592,8 @@ async function handleGroupLeave(sock, msg) {
     
     botLogger.info(`Mengirim goodbye message untuk grup ${groupJid}`);
     
-    const groupMetadata = await sock.groupMetadata(groupJid);
+    // Gunakan retry untuk mendapatkan metadata grup
+    const groupMetadata = await retryWithBackoff(() => sock.groupMetadata(groupJid));
     const groupName = groupMetadata.subject;
     const memberCount = groupMetadata.participants.length;
     
@@ -574,7 +652,7 @@ async function handleGroupLeave(sock, msg) {
         
         // Hapus file temporary
         try {
-          await fs.unlink(goodbyeImagePath);
+          await fsPromises.unlink(goodbyeImagePath);
         } catch (unlinkError) {
           botLogger.error('Error deleting temporary goodbye image:', unlinkError);
         }

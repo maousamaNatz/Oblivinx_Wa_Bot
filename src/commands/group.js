@@ -307,7 +307,7 @@ global.Oblixn.cmd({
       return await msg.reply("Bot harus menjadi admin untuk melakukan ini!");
     }
     if (!msg.isAdmin) {
-      return await msg.reply("Hanya admin yang bisa menghapus anggota!");
+      return await msg.reply("hanya admin yang bisa menambah anggota!");
     }
 
     if (!args.length) {

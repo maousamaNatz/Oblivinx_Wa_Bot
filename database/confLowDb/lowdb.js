@@ -212,8 +212,7 @@ const groupSchema = {
       }
     }
   },
-  required: ["group_id", "owner_id", "group_name"],
-  additionalProperties: false
+  required: ["group_id", "owner_id", "group_name"]
 };
 
 // Skema untuk order
@@ -268,7 +267,7 @@ async function getUser(userId) {
   }
 }
 
-// Fungsi untuk memperbarui data user
+// Fungsi untuk memperbarui data user dengan pembuatan otomatis jika tidak ada
 async function updateUser(userId, updatedData) {
   try {
     if (typeof userId !== "string" || userId.length === 0) {
@@ -276,9 +275,39 @@ async function updateUser(userId, updatedData) {
     }
     const data = await readDatabase();
     const userIndex = data.users.findIndex((user) => user.user_id === userId);
+    
+    // Jika user tidak ditemukan, coba buat user baru
     if (userIndex === -1) {
-      throw new Error(`User not found: ${userId}`);
+      log(`User not found: ${userId}, attempting to create new user`, 'warn');
+      try {
+        // Buat user baru dan kemudian update
+        await createNewUser(userId);
+        // Ambil database yang sudah diupdate
+        const refreshedData = await readDatabase();
+        const newUserIndex = refreshedData.users.findIndex((user) => user.user_id === userId);
+        
+        if (newUserIndex === -1) {
+          throw new Error(`Failed to create user: ${userId}`);
+        }
+        
+        const updatedUser = { ...refreshedData.users[newUserIndex], ...updatedData };
+        if (!validateUser(updatedUser)) {
+          throw new Error(
+            "Invalid updated user data: " + ajv.errorsText(validateUser.errors)
+          );
+        }
+        
+        refreshedData.users[newUserIndex] = updatedUser;
+        log(`Updating newly created user ${userId} with data: ${JSON.stringify(updatedUser)}`, 'debug');
+        await writeDatabase(refreshedData);
+        return { success: true, data: updatedUser, isNewUser: true };
+      } catch (createError) {
+        log("Error creating and updating user: " + createError.message, 'error');
+        throw createError;
+      }
     }
+    
+    // Update user yang sudah ada
     const updatedUser = { ...data.users[userIndex], ...updatedData };
     if (!validateUser(updatedUser)) {
       throw new Error(
@@ -286,11 +315,166 @@ async function updateUser(userId, updatedData) {
       );
     }
     data.users[userIndex] = updatedUser;
-    log(`Updating user ${userId} with data: ${JSON.stringify(updatedUser)}`, 'debug');
+    log(`Updating existing user ${userId} with data: ${JSON.stringify(updatedUser)}`, 'debug');
     await writeDatabase(data);
-    return { success: true, data: updatedUser };
+    return { success: true, data: updatedUser, isNewUser: false };
   } catch (error) {
     log("Error updating user: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk membuat user baru otomatis
+async function createNewUser(userId) {
+  try {
+    if (typeof userId !== "string" || userId.length === 0) {
+      throw new Error("Invalid userId: must be a non-empty string");
+    }
+    
+    log(`Creating new user with ID: ${userId}`, 'info');
+    
+    // Format data user baru dengan nilai default
+    const newUser = {
+      user_id: userId,
+      username: null,
+      name: null,
+      phone: userId,
+      bio: "Hey there! I'm using this bot.",
+      is_banned: 0,
+      is_blocked: 0,
+      last_interaction: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      experience: {
+        level: 1,
+        xp_current: 0,
+        xp_total: 0,
+        xp_to_next_level: 100
+      },
+      achievements: [],
+      settings: {
+        language: "id",
+        notifications: true,
+        theme: "default"
+      },
+      usage: {
+        commands_used: 0,
+        messages_sent: 0,
+        images_processed: 0
+      }
+    };
+
+    // Validasi user baru
+    if (!validateUser(newUser)) {
+      throw new Error(
+        "Invalid new user data: " + ajv.errorsText(validateUser.errors)
+      );
+    }
+
+    // Tambahkan user ke database
+    const data = await readDatabase();
+    data.users.push(newUser);
+    await writeDatabase(data);
+    log(`User ${userId} created successfully`, 'info');
+    return newUser;
+  } catch (error) {
+    log("Error creating new user: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk menambahkan XP ke user dengan pembuatan otomatis
+async function addUserXP(userId, xpAmount, reason = "activity") {
+  try {
+    if (typeof userId !== "string" || userId.length === 0) {
+      throw new Error("Invalid userId: must be a non-empty string");
+    }
+    
+    let user = await getUser(userId);
+    
+    // Jika user tidak ditemukan, buat user baru
+    if (!user) {
+      try {
+        user = await createNewUser(userId);
+        log(`Created new user ${userId} for XP tracking`, 'info');
+      } catch (createError) {
+        log(`Failed to create user ${userId} for XP tracking: ${createError.message}`, 'error');
+        throw new Error(`Failed to add XP: ${createError.message}`);
+      }
+    }
+    
+    // Hitung XP baru
+    const currentXP = user.experience.xp_current + xpAmount;
+    const totalXP = user.experience.xp_total + xpAmount;
+    let level = user.experience.level;
+    let xpToNextLevel = user.experience.xp_to_next_level;
+    
+    // Cek apakah user naik level
+    while (currentXP >= xpToNextLevel) {
+      level++;
+      xpToNextLevel = Math.round(xpToNextLevel * 1.5); // XP untuk naik level selanjutnya
+    }
+    
+    // Catat perubahan XP
+    const xpLog = {
+      user_id: userId,
+      amount: xpAmount,
+      reason: reason,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Update database
+    const data = await readDatabase();
+    
+    // Tambahkan log XP
+    if (!data.xp_logs) data.xp_logs = [];
+    data.xp_logs.push(xpLog);
+    
+    // Update user
+    const userIndex = data.users.findIndex((u) => u.user_id === userId);
+    if (userIndex !== -1) {
+      data.users[userIndex].experience = {
+        level,
+        xp_current: currentXP,
+        xp_total: totalXP,
+        xp_to_next_level: xpToNextLevel
+      };
+      
+      // Jika naik level, tambahkan achievement
+      if (level > user.experience.level) {
+        const levelUpAchievement = {
+          id: `level_${level}`,
+          name: `Level ${level}`,
+          description: `Reached level ${level}`,
+          unlocked_at: new Date().toISOString()
+        };
+        
+        if (!data.users[userIndex].achievements) {
+          data.users[userIndex].achievements = [];
+        }
+        
+        data.users[userIndex].achievements.push(levelUpAchievement);
+        log(`User ${userId} leveled up to ${level}`, 'info');
+      }
+      
+      await writeDatabase(data);
+      
+      return {
+        success: true,
+        data: {
+          previousLevel: user.experience.level,
+          currentLevel: level,
+          levelUp: level > user.experience.level,
+          currentXP,
+          totalXP,
+          xpToNextLevel
+        }
+      };
+    } else {
+      throw new Error(`User not found after creation: ${userId}`);
+    }
+  } catch (error) {
+    log(`Error adding XP to user ${userId}: ${error.message}`, 'error');
     throw error;
   }
 }
@@ -301,9 +485,14 @@ async function getGroup(groupId) {
     if (typeof groupId !== "string" || groupId.length === 0) {
       throw new Error("Invalid groupId: must be a non-empty string");
     }
+    
+    // Pastikan groupId adalah string
+    const stringGroupId = String(groupId);
+    
     const data = await readDatabase();
-    log(`Fetching group with ID: ${groupId}`, 'debug');
-    const group = data.groups.find((group) => group.group_id === groupId) || null;
+    log(`Fetching group with ID: ${stringGroupId}`, 'debug');
+    const group = data.groups.find((group) => group.group_id === stringGroupId) || null;
+    
     log(`Group found: ${JSON.stringify(group)}`, 'debug');
     return group;
   } catch (error) {
@@ -315,24 +504,23 @@ async function getGroup(groupId) {
 // Fungsi untuk memperbarui data group
 async function updateGroup(groupId, groupData) {
   try {
-    if (typeof groupId !== "string" || groupId.length === 0) {
-      throw new Error("Invalid groupId: must be a non-empty string");
-    }
+    // Pastikan groupId adalah string
+    const stringGroupId = String(groupId);
     
     const data = await readDatabase();
     const groupIndex = data.groups.findIndex(
-      (group) => group.group_id === groupId
+      (group) => group.group_id === stringGroupId
     );
     
     if (groupIndex === -1) {
       if (!groupData.owner_id) {
-        log(`Tidak dapat menambahkan grup baru ${groupId} tanpa owner_id`, 'warn');
+        log(`Tidak dapat menambahkan grup baru ${stringGroupId} tanpa owner_id`, 'warn');
         return { success: false, message: "Missing owner_id for new group" };
       }
       
       const result = await addGroup({
-        group_id: groupId,
-        owner_id: groupData.owner_id,
+        group_id: stringGroupId,
+        owner_id: String(groupData.owner_id),
         group_name: groupData.group_name || "Unnamed Group",
         ...groupData
       });
@@ -340,22 +528,19 @@ async function updateGroup(groupId, groupData) {
       return result;
     }
     
-    // Hapus properti yang tidak diizinkan
-    const allowedProperties = Object.keys(groupSchema.properties);
-    const filteredData = Object.keys(groupData)
-      .filter(key => allowedProperties.includes(key))
-      .reduce((obj, key) => {
-        obj[key] = groupData[key];
-        return obj;
-      }, {});
-    
+    // Buat objek grup yang diperbarui
     const updatedGroup = { 
       ...data.groups[groupIndex], 
-      ...filteredData,
-      group_id: groupId,
+      ...groupData,
+      group_id: stringGroupId,
       updated_at: new Date().toISOString()
     };
     
+    // Pastikan semua ID adalah string
+    if (updatedGroup.id) updatedGroup.id = String(updatedGroup.id);
+    if (updatedGroup.owner_id) updatedGroup.owner_id = String(updatedGroup.owner_id);
+    
+    // Validasi data yang diperbarui
     if (!validateGroup(updatedGroup)) {
       log(`Invalid updated group data: ${ajv.errorsText(validateGroup.errors)}`, 'error');
       return { 
@@ -365,7 +550,7 @@ async function updateGroup(groupId, groupData) {
     }
     
     data.groups[groupIndex] = updatedGroup;
-    log(`Updating group ${groupId} with data: ${JSON.stringify(updatedGroup)}`, 'debug');
+    log(`Updating group ${stringGroupId} with data: ${JSON.stringify(updatedGroup)}`, 'debug');
     await writeDatabase(data);
     
     return { success: true, data: updatedGroup };
@@ -375,296 +560,29 @@ async function updateGroup(groupId, groupData) {
   }
 }
 
-// Fungsi untuk menambah user dengan validasi AJV
-async function addUser(userData) {
-  try {
-    const minimalUserData = {
-      user_id: userData.user_id,
-      username: userData.username || null,
-    };
-    if (!validateUser({ ...minimalUserData, id: 1 })) {
-      throw new Error("Invalid user data: " + ajv.errorsText(validateUser.errors));
-    }
-
-    const data = await readDatabase();
-    const defaultUser = {
-      id: getNewId(data.users),
-      user_id: userData.user_id,
-      username: userData.username || null,
-      is_premium: userData.is_premium || 0,
-      is_banned: userData.is_banned || 0,
-      is_blocked: userData.is_blocked || 0,
-      coins: userData.coins || 0.0,
-      experience: userData.experience || 0,
-      level: userData.level || 1,
-      ranking: userData.ranking || null,
-      total_messages: userData.total_messages || 0,
-      messages_per_day: userData.messages_per_day || 0,
-      feature_first_used: userData.feature_first_used || "unknown",
-      feature_last_used: userData.feature_last_used || "unknown",
-      total_feature_usage: userData.total_feature_usage || 0,
-      daily_feature_average: userData.daily_feature_average || 0,
-      blocked_status: userData.blocked_status || 0,
-      is_sewa: userData.is_sewa || 0,
-      language: userData.language || "id",
-      anti_delete_message: userData.anti_delete_message || 0,
-      anti_hidden_tag: userData.anti_hidden_tag || 0,
-      anti_group_link: userData.anti_group_link || 0,
-      anti_view_once: userData.anti_view_once || 0,
-      auto_sticker: userData.auto_sticker || 0,
-      log_detection: userData.log_detection || 0,
-      auto_level_up: userData.auto_level_up || 0,
-      mute_bot: userData.mute_bot || 0,
-      warnings: userData.warnings || 0,
-      created_at: userData.created_at || new Date().toISOString(),
-      updated_at: userData.updated_at || new Date().toISOString(),
-      daily_xp: userData.daily_xp || 0,
-      last_message: userData.last_message || new Date().toISOString(),
-      achievements: userData.achievements || null,
-      last_message_xp: userData.last_message_xp || new Date().toISOString(),
-      weekly_xp: userData.weekly_xp || 0,
-      total_xp: userData.total_xp || 0,
-    };
-
-    if (!validateUser(defaultUser)) {
-      throw new Error("Invalid user data after defaults: " + ajv.errorsText(validateUser.errors));
-    }
-
-    if (data.users.some((user) => user.user_id === userData.user_id)) {
-      log(`User with user_id ${userData.user_id} already exists`, 'warn');
-      return { success: false, message: "User with this user_id already exists" };
-    }
-
-    data.users.push(defaultUser);
-    log(`Adding user: ${JSON.stringify(defaultUser)}`, 'debug');
-    await writeDatabase(data);
-    return { success: true, data: defaultUser };
-  } catch (error) {
-    log("Error adding user: " + error.message, 'error');
-    throw error;
-  }
-}
-
-// Fungsi untuk ban user dengan validasi AJV
-async function banUser(userId, reason, bannedBy) {
-  try {
-    const banData = { userId, reason, bannedBy };
-    if (!validateBanUser(banData)) {
-      throw new Error("Invalid ban data: " + ajv.errorsText(validateBanUser.errors));
-    }
-
-    const data = await readDatabase();
-    let user = data.users.find((user) => user.user_id === userId);
-    if (!user) {
-      const result = await addUser({ user_id: userId });
-      user = result.data;
-    }
-    user.is_banned = 1;
-    user.updated_at = new Date().toISOString();
-
-    data.banned_users = data.banned_users.filter((ban) => ban.user_id !== userId);
-    const banEntry = {
-      id: getNewId(data.banned_users),
-      user_id: userId,
-      reason: reason || "Tidak ada alasan",
-      banned_by: bannedBy,
-      is_system_block: 0,
-      created_at: new Date().toISOString(),
-    };
-    data.banned_users.push(banEntry);
-
-    log(`Banning user ${userId}: ${JSON.stringify(banEntry)}`, 'info');
-    await writeDatabase(data);
-    return { success: true, message: "User berhasil diban" };
-  } catch (error) {
-    log("Error banning user: " + error.message, 'error');
-    throw error;
-  }
-}
-
-// Fungsi untuk unban user
-async function unbanUser(userId) {
-  try {
-    if (typeof userId !== "string" || userId.length === 0) {
-      throw new Error("Invalid userId: must be a non-empty string");
-    }
-
-    const data = await readDatabase();
-    const bannedUser = data.banned_users.find(
-      (ban) => ban.user_id === userId && ban.is_system_block === 0
-    );
-    if (!bannedUser) {
-      log(`User ${userId} not found in banned list`, 'warn');
-      return {
-        success: false,
-        message: "User tidak ditemukan dalam daftar banned",
-        wasUnbanned: false,
-      };
-    }
-    data.banned_users = data.banned_users.filter(
-      (ban) => ban.user_id !== userId || ban.is_system_block !== 0
-    );
-    const user = data.users.find((user) => user.user_id === userId);
-    if (user) {
-      user.is_banned = 0;
-      user.updated_at = new Date().toISOString();
-      await updateUser(userId, { is_banned: 0, updated_at: user.updated_at });
-    }
-
-    log(`Unbanning user ${userId}`, 'info');
-    await writeDatabase(data);
-    return {
-      success: true,
-      message: `User ${userId} berhasil diunban`,
-      wasUnbanned: true,
-    };
-  } catch (error) {
-    log("Error unbanning user: " + error.message, 'error');
-    throw error;
-  }
-}
-
-// Fungsi untuk cek status user
-async function checkUserStatus(userId) {
-  try {
-    if (typeof userId !== "string" || userId.length === 0) {
-      throw new Error("Invalid userId: must be a non-empty string");
-    }
-
-    const data = await readDatabase();
-    const user = await getUser(userId);
-    const bannedInfo = data.banned_users.find((ban) => ban.user_id === userId);
-
-    if (user) {
-      log(`User status for ${userId}: ${JSON.stringify(user)}`, 'debug');
-      return {
-        isBanned: user.is_banned === 1,
-        isBlocked: user.is_blocked === 1,
-        warnings: user.warnings,
-        banReason: bannedInfo?.reason || null,
-        bannedBy: bannedInfo?.banned_by || null,
-        isSystemBlock: bannedInfo?.is_system_block === 1 || false,
-      };
-    }
-
-    log(`No user found for ${userId}, returning default status`, 'debug');
-    return {
-      isBanned: false,
-      isBlocked: false,
-      warnings: 0,
-      banReason: null,
-      bannedBy: null,
-      isSystemBlock: false,
-    };
-  } catch (error) {
-    log("Error checking user status: " + error.message, 'error');
-    throw error;
-  }
-}
-
-// Fungsi untuk blokir user oleh sistem
-async function blockUserBySystem(userId) {
-  try {
-    if (typeof userId !== "string" || userId.length === 0) {
-      throw new Error("Invalid userId: must be a non-empty string");
-    }
-
-    const data = await readDatabase();
-    let user = await getUser(userId);
-    if (!user) {
-      const result = await addUser({ user_id: userId });
-      user = result.data;
-    }
-    user.is_blocked = 1;
-    user.updated_at = new Date().toISOString();
-    await updateUser(userId, { is_blocked: 1, updated_at: user.updated_at });
-
-    data.banned_users = data.banned_users.filter((ban) => ban.user_id !== userId);
-    const banEntry = {
-      id: getNewId(data.banned_users),
-      user_id: userId,
-      reason: "Blocked by system",
-      banned_by: "SYSTEM",
-      is_system_block: 1,
-      created_at: new Date().toISOString(),
-    };
-    data.banned_users.push(banEntry);
-
-    log(`Blocking user ${userId} by system: ${JSON.stringify(banEntry)}`, 'info');
-    await writeDatabase(data);
-    return { success: true, message: "User berhasil diblokir oleh sistem" };
-  } catch (error) {
-    log("Error blocking user: " + error.message, 'error');
-    throw error;
-  }
-}
-
-// Fungsi untuk mendapatkan daftar user yang dibanned
-async function getListBannedUsers() {
-  try {
-    const data = await readDatabase();
-    const bannedUsers = data.banned_users.filter((ban) => ban.is_system_block === 0);
-
-    if (bannedUsers.length === 0) {
-      log("No banned users found", 'info');
-      return {
-        success: true,
-        message: "Tidak ada user yang dibanned",
-        data: [],
-      };
-    }
-
-    const formattedUsers = bannedUsers.map((banned) => {
-      const user = data.users.find((user) => user.user_id === banned.user_id);
-      const banDate = new Date(banned.created_at).toLocaleString("id-ID", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
-
-      return {
-        userId: banned.user_id,
-        username: user?.username || "Tidak diketahui",
-        reason: banned.reason || "Tidak ada alasan",
-        bannedBy: banned.banned_by,
-        banDate: banDate,
-      };
-    });
-
-    formattedUsers.sort((a, b) => new Date(b.banDate) - new Date(a.banDate));
-    log(`Fetched banned users: ${JSON.stringify(formattedUsers)}`, 'debug');
-    return {
-      success: true,
-      message: "Daftar user yang dibanned berhasil diambil",
-      data: formattedUsers,
-    };
-  } catch (error) {
-    log("Error getting banned users list: " + error.message, 'error');
-    throw error;
-  }
-}
-
 // Fungsi untuk menambah group dengan validasi AJV (tanpa bot_is_admin)
 async function addGroup(groupData) {
   try {
     const minimalGroupData = {
-      group_id: groupData.group_id,
-      owner_id: groupData.owner_id,
+      group_id: String(groupData.group_id),
+      owner_id: String(groupData.owner_id),
       group_name: groupData.group_name || null,
     };
-    if (!validateGroup({ ...minimalGroupData, id: 1 })) {
+    
+    // Periksa data minimal tanpa validasi id
+    if (!validateGroup({ ...minimalGroupData, id: "1" })) {
       throw new Error("Invalid group data: " + ajv.errorsText(validateGroup.errors));
     }
 
     const data = await readDatabase();
+    // Konversi id menjadi string
+    const newId = String(getNewId(data.groups));
+    
     const defaultGroup = {
-      id: getNewId(data.groups),
-      group_id: groupData.group_id,
+      id: newId,
+      group_id: String(groupData.group_id),
       group_name: groupData.group_name || null,
-      owner_id: groupData.owner_id,
+      owner_id: String(groupData.owner_id),
       total_members: groupData.total_members || 0,
       created_at: groupData.created_at || new Date().toISOString(),
       updated_at: groupData.updated_at || new Date().toISOString(),
@@ -694,10 +612,11 @@ async function addGroup(groupData) {
     };
 
     if (!validateGroup(defaultGroup)) {
+      log(`Invalid group data after defaults: ${ajv.errorsText(validateGroup.errors)}`, 'error');
       throw new Error("Invalid group data after defaults: " + ajv.errorsText(validateGroup.errors));
     }
 
-    if (data.groups.some((group) => group.group_id === groupData.group_id)) {
+    if (data.groups.some((group) => group.group_id === String(groupData.group_id))) {
       log(`Group with group_id ${groupData.group_id} already exists`, 'warn');
       return { success: false, message: "Group with this group_id already exists" };
     }
@@ -1051,6 +970,112 @@ const fiturPermissionGroup = async (groupId) => {
   }
 }
 
+// Fungsi untuk memeriksa status user
+async function checkUserStatus(userId) {
+  try {
+    const user = await getUser(userId);
+    if (!user) {
+      return { exists: false, isBanned: false, isBlocked: false };
+    }
+    return {
+      exists: true,
+      isBanned: user.is_banned === 1,
+      isBlocked: user.is_blocked === 1
+    };
+  } catch (error) {
+    log("Error checking user status: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk memblokir user oleh sistem
+async function blockUserBySystem(userId, reason) {
+  try {
+    const data = await readDatabase();
+    const userIndex = data.users.findIndex((user) => user.user_id === userId);
+    
+    if (userIndex === -1) {
+      throw new Error(`User not found: ${userId}`);
+    }
+    
+    data.users[userIndex].is_blocked = 1;
+    data.users[userIndex].blocked_status = 1;
+    data.users[userIndex].updated_at = new Date().toISOString();
+    
+    await writeDatabase(data);
+    return { success: true, message: `User ${userId} blocked by system: ${reason}` };
+  } catch (error) {
+    log("Error blocking user by system: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk mendapatkan daftar user yang dibanned
+async function getListBannedUsers() {
+  try {
+    const data = await readDatabase();
+    return data.users.filter(user => user.is_banned === 1);
+  } catch (error) {
+    log("Error getting banned users list: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk memblokir user
+async function banUser(userId, reason, bannedBy) {
+  try {
+    const data = await readDatabase();
+    const userIndex = data.users.findIndex((user) => user.user_id === userId);
+    
+    if (userIndex === -1) {
+      throw new Error(`User not found: ${userId}`);
+    }
+    
+    data.users[userIndex].is_banned = 1;
+    data.users[userIndex].updated_at = new Date().toISOString();
+    
+    // Tambahkan ke daftar banned_users
+    const banEntry = {
+      userId: userId,
+      reason: reason || "No reason provided",
+      bannedBy: bannedBy,
+      bannedAt: new Date().toISOString()
+    };
+    
+    data.banned_users.push(banEntry);
+    
+    await writeDatabase(data);
+    return { success: true, message: `User ${userId} banned successfully` };
+  } catch (error) {
+    log("Error banning user: " + error.message, 'error');
+    throw error;
+  }
+}
+
+// Fungsi untuk membuka blokir user
+async function unbanUser(userId) {
+  try {
+    const data = await readDatabase();
+    const userIndex = data.users.findIndex((user) => user.user_id === userId);
+    
+    if (userIndex === -1) {
+      throw new Error(`User not found: ${userId}`);
+    }
+    
+    data.users[userIndex].is_banned = 0;
+    data.users[userIndex].updated_at = new Date().toISOString();
+    
+    // Hapus dari daftar banned_users
+    data.banned_users = data.banned_users.filter(ban => ban.userId !== userId);
+    
+    await writeDatabase(data);
+    return { success: true, message: `User ${userId} unbanned successfully` };
+  } catch (error) {
+    log("Error unbanning user: " + error.message, 'error');
+    throw error;
+  }
+}
+
 initializeDatabase().catch((err) => {
   console.error("Failed to initialize database on module load:", err);
   process.exit(1);
@@ -1058,7 +1083,7 @@ initializeDatabase().catch((err) => {
 
 // Export semua fungsi
 module.exports = {
-  addUser,
+  addUser: createNewUser,
   banUser,
   unbanUser,
   checkUserStatus,
@@ -1084,4 +1109,5 @@ module.exports = {
   fiturPermissionGroup,
   readDatabase,
   writeDatabase,
+  addUserXP,
 };

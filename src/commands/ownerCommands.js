@@ -10,7 +10,7 @@ global.Oblixn.cmd({
   name: "ownerinfo",
   alias: ["owner"],
   desc: "Menampilkan informasi owner bot",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -53,7 +53,7 @@ global.Oblixn.cmd({
 global.Oblixn.cmd({
   name: "restart",
   desc: "Restart bot",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -74,7 +74,7 @@ global.Oblixn.cmd({
 global.Oblixn.cmd({
   name: "shutdown",
   desc: "Matikan bot",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -96,7 +96,7 @@ global.Oblixn.cmd({
   name: "broadcast",
   alias: ["bc"],
   desc: "Broadcast pesan ke semua grup",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg, { args }) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -224,7 +224,7 @@ global.Oblixn.cmd({
 global.Oblixn.cmd({
   name: "ban",
   desc: "Ban user dari menggunakan bot",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg, { args }) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -262,7 +262,7 @@ global.Oblixn.cmd({
 global.Oblixn.cmd({
   name: "unban",
   desc: "Unban user yang dibanned",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg, { args }) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -299,7 +299,7 @@ global.Oblixn.cmd({
 global.Oblixn.cmd({
   name: "listban",
   desc: "Menampilkan daftar user yang dibanned",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
@@ -335,14 +335,14 @@ global.Oblixn.cmd({
   name: "ownerhelp",
   alias: ["adminhelp"],
   desc: "Menampilkan daftar perintah khusus owner",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
     }
 
     try {
-      const ownerCommands = [
+      const owners = [
         {
           category: "🛠️ Bot Management",
           commands: [
@@ -368,7 +368,7 @@ global.Oblixn.cmd({
       ];
 
       let helpMessage = `*👑 OWNER COMMANDS 👑*\n\n`;
-      ownerCommands.forEach((category) => {
+      owners.forEach((category) => {
         helpMessage += `${category.category}:\n`;
         category.commands.forEach((cmd) => (helpMessage += `• ${cmd}\n`));
         helpMessage += "\n";
@@ -388,7 +388,7 @@ global.Oblixn.cmd({
   name: "bot",
   alias: ["togglebot"],
   desc: "Mengaktifkan atau menonaktifkan bot",
-  category: "ownercommand",
+  category: "owner",
   async exec(msg, { args }) {
     if (!global.Oblixn.isOwner(msg.sender)) {
       return await msg.reply("⚠️ Perintah ini hanya untuk owner bot!");
